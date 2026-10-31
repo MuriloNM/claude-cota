@@ -66,23 +66,26 @@ async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura 
   }
 }
 
-// O card do app vem primeiro. A sessão (rateLimits) traz o mesmo uso com uma casa decimal, e o card arredonda
-// para cima; como o uso só sobe dentro da semana, vale o maior dos dois.
+// O card do app é a referência. A sessão (rateLimits) mede o mesmo uso por outro caminho e pode divergir alguns
+// pontos para mais ou para menos, então só entra quando não há leitura do card da última hora (no terminal, por
+// exemplo, que não tem o card, mas reaproveita a leitura que o desktop guardou).
+const VALIDADE_APP_MS = 60 * MIN_MS
 async function atualiza($: EngineInterface): Promise<string | undefined> {
   const agora = await $.clock.now()
   const app = await leituraDoApp($, agora)
   const daSemana = app && Date.parse(app.resetsAt) > agora ? app : undefined
+  const recente = daSemana && agora - daSemana.lido < VALIDADE_APP_MS ? daSemana : undefined
   const sessao = (await $.session.usage()).rateLimits.find(x => x.kind === 'seven_day')
   let janela: Janela | undefined
-  if (daSemana && sessao) {
-    janela = { kind: 'seven_day', percentUsed: Math.max(daSemana.percentUsed, Math.ceil(sessao.percentUsed)), resetsAt: daSemana.resetsAt }
-  } else if (daSemana) {
-    janela = { kind: 'seven_day', percentUsed: daSemana.percentUsed, resetsAt: daSemana.resetsAt }
+  if (recente) {
+    janela = { kind: 'seven_day', percentUsed: recente.percentUsed, resetsAt: recente.resetsAt }
   } else if (sessao) {
     janela = { ...sessao, percentUsed: Math.ceil(sessao.percentUsed) }
+  } else if (daSemana) {
+    janela = { kind: 'seven_day', percentUsed: daSemana.percentUsed, resetsAt: daSemana.resetsAt }
   }
   const minutos = daSemana ? Math.round((agora - daSemana.lido) / MIN_MS) : 0
-  fonte = daSemana ? `app (lido há ${minutos} min)${erroDoApp ? `; última consulta: ${erroDoApp}` : ''}` : sessao ? 'sessão' : 'nenhuma'
+  fonte = (recente || (!sessao && daSemana)) ? `app (lido há ${minutos} min)${erroDoApp ? `; última consulta: ${erroDoApp}` : ''}` : sessao ? 'sessão' : 'nenhuma'
   const janelas = janela ? [janela] : []
   $.ui.status(linha(janelas, agora, true))
   return janela ? linha(janelas, agora) : undefined
