@@ -23,5 +23,12 @@ claude plugin install cota --marketplace MuriloNM/claude-cota
 
 ## Requisitos
 
+- **Git instalado.** O app baixa o plugin do GitHub com o git. No Windows, instale pelo PowerShell e reabra o app:
+
+  ```
+  winget install --id Git.Git -e
+  ```
+
+  Depois de instalado o plugin fica na área interna do Claude e dá para remover pelo app (**Plugins**). O git pode ser desinstalado.
 - App desktop do Claude (aba Code) com plano que mostre os limites de uso no card de uso. Fora do desktop a cota vem da própria sessão e pode aparecer como "sem dado".
 - A linha aparece depois da primeira mensagem de cada sessão.
