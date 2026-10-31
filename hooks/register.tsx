@@ -36,20 +36,23 @@ function linha(janelas: readonly Janela[], agora: number, curta = false): string
 
 // No desktop a sessão não repassa rateLimits; o app tem a cota em ccd_session_mgmt.get_usage.
 let erroDoApp = ''
+// Última leitura boa do app: o get_usage às vezes responde "indisponível" e a sessão traz outro arredondamento.
+let ultimaDoApp: Janela[] = []
 type JanelaDoApp = { label: string; percentUsed: number; resetsAt?: string }
 
 async function janelasDoApp($: EngineInterface): Promise<Janela[]> {
   try {
     const r = await $.mcp.call('ccd_session_mgmt', 'get_usage', {})
-    if (r.isError) { erroDoApp = 'get_usage falhou'; return [] }
+    if (r.isError) { erroDoApp = 'get_usage falhou'; return ultimaDoApp }
     const bloco = r.content.find(c => c.type === 'text') as { text: string } | undefined
     const dados = r.structuredContent ?? (bloco ? JSON.parse(bloco.text) : undefined)
     const janelas: JanelaDoApp[] = dados?.plan?.windows ?? []
     const semana = janelas.find(j => /weekly/i.test(j.label) && /all models/i.test(j.label))
-    return semana ? [{ kind: 'seven_day', percentUsed: semana.percentUsed, resetsAt: semana.resetsAt }] : []
+    if (semana) ultimaDoApp = [{ kind: 'seven_day', percentUsed: semana.percentUsed, resetsAt: semana.resetsAt }]
+    return ultimaDoApp
   } catch (err) {
     erroDoApp = String(err).slice(0, 120)
-    return []
+    return ultimaDoApp
   }
 }
 
