@@ -35,42 +35,60 @@ function linha(janelas: readonly Janela[], agora: number, curta = false): string
 }
 
 // No desktop a sessão não repassa rateLimits; o app tem a cota em ccd_session_mgmt.get_usage.
-let erroDoApp = ''
-// Última leitura boa do app: o get_usage às vezes responde "indisponível" e a sessão traz outro arredondamento.
-let ultimaDoApp: Janela[] = []
+// O get_usage responde "indisponível" se consultado demais: no máximo uma consulta a cada 5 min,
+// e a última leitura boa fica no $.store, valendo entre sessões.
+const INTERVALO_APP_MS = 5 * MIN_MS
+type Leitura = { percentUsed: number; resetsAt: string; lido: number }
 type JanelaDoApp = { label: string; percentUsed: number; resetsAt?: string }
+let erroDoApp = ''
+let fonte = ''
+let ultimaConsulta = 0
 
-async function janelasDoApp($: EngineInterface): Promise<Janela[]> {
+async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura | undefined> {
+  const guardada = (await $.store.get('ultima')) as Leitura | undefined
+  if (agora - ultimaConsulta < INTERVALO_APP_MS) return guardada
+  ultimaConsulta = agora
   try {
     const r = await $.mcp.call('ccd_session_mgmt', 'get_usage', {})
-    if (r.isError) { erroDoApp = 'get_usage falhou'; return ultimaDoApp }
+    if (r.isError) { erroDoApp = 'get_usage falhou'; return guardada }
     const bloco = r.content.find(c => c.type === 'text') as { text: string } | undefined
     const dados = r.structuredContent ?? (bloco ? JSON.parse(bloco.text) : undefined)
     const janelas: JanelaDoApp[] = dados?.plan?.windows ?? []
     const semana = janelas.find(j => /weekly/i.test(j.label) && /all models/i.test(j.label))
-    if (semana) ultimaDoApp = [{ kind: 'seven_day', percentUsed: semana.percentUsed, resetsAt: semana.resetsAt }]
-    return ultimaDoApp
+    if (!semana?.resetsAt) { erroDoApp = dados?.plan?.status ?? 'sem janela semanal'; return guardada }
+    erroDoApp = ''
+    const nova: Leitura = { percentUsed: semana.percentUsed, resetsAt: semana.resetsAt, lido: agora }
+    await $.store.set('ultima', nova)
+    return nova
   } catch (err) {
     erroDoApp = String(err).slice(0, 120)
-    return ultimaDoApp
+    return guardada
   }
 }
 
-// O card do app (get_usage) vem primeiro; o cabeçalho da API (rateLimits) atrasa e arredonda diferente.
+// O card do app vem primeiro. A sessão (rateLimits) traz o mesmo uso com uma casa decimal, e o card arredonda
+// para cima; como o uso só sobe dentro da semana, vale o maior dos dois.
 async function atualiza($: EngineInterface): Promise<string | undefined> {
-  const doApp = await janelasDoApp($)
-  const janelas = doApp.length ? doApp : (await $.session.usage()).rateLimits
   const agora = await $.clock.now()
+  const app = await leituraDoApp($, agora)
+  const daSemana = app && Date.parse(app.resetsAt) > agora ? app : undefined
+  const sessao = (await $.session.usage()).rateLimits.find(x => x.kind === 'seven_day')
+  let janela: Janela | undefined
+  if (daSemana && sessao) {
+    janela = { kind: 'seven_day', percentUsed: Math.max(daSemana.percentUsed, Math.ceil(sessao.percentUsed)), resetsAt: daSemana.resetsAt }
+  } else if (daSemana) {
+    janela = { kind: 'seven_day', percentUsed: daSemana.percentUsed, resetsAt: daSemana.resetsAt }
+  } else if (sessao) {
+    janela = { ...sessao, percentUsed: Math.ceil(sessao.percentUsed) }
+  }
+  const minutos = daSemana ? Math.round((agora - daSemana.lido) / MIN_MS) : 0
+  fonte = daSemana ? `app (lido há ${minutos} min)${erroDoApp ? `; última consulta: ${erroDoApp}` : ''}` : sessao ? 'sessão' : 'nenhuma'
+  const janelas = janela ? [janela] : []
   $.ui.status(linha(janelas, agora, true))
-  return janelas.some(x => x.kind === 'seven_day') ? linha(janelas, agora) : undefined
+  return janela ? linha(janelas, agora) : undefined
 }
 
 export const register: Register = on => {
-  on('prompt.submit', ($, e, next) => {
-    void atualiza($)
-    return next(e)
-  })
-
   on('turn.complete', async ($, e, next) => {
     await atualiza($)
     return next(e)
@@ -78,19 +96,14 @@ export const register: Register = on => {
 
   on('command.run', { command: 'cota' }, async $ => {
     const t = await atualiza($)
-    return { text: t ?? 'Cota semanal: sem dado ainda.' }
+    return { text: `${t ?? 'Cota semanal: sem dado ainda.'}
+fonte: ${fonte}` }
   })
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'cota', description: 'Mostra o ritmo da cota semanal' })
-    // No começo da sessão o app pode ainda não responder: tenta a cada 10 s até ter dado.
-    let tentativas = 0
-    const inicio = $.clock.every(10_000, async () => {
-      tentativas += 1
-      if ((await atualiza($)) || tentativas >= 30) inicio.cancel()
-    })
+    // Mostra já a última leitura guardada; depois atualiza a cada resposta.
     void atualiza($)
-    $.clock.every(MIN_MS, () => void atualiza($))
     return next(e)
   })
 }
