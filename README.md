@@ -32,3 +32,10 @@ claude plugin install cota --marketplace MuriloNM/claude-cota
   Depois de instalado o plugin fica na área interna do Claude e dá para remover pelo app (**Plugins**). O git pode ser desinstalado.
 - App desktop do Claude (aba Code) com plano que mostre os limites de uso no card de uso. Fora do desktop a cota vem da própria sessão e pode aparecer como "sem dado".
 - A linha aparece depois da primeira mensagem de cada sessão.
+
+## O que o plugin faz (transparência)
+
+- **Lê:** só a cota de uso da conta (limite semanal e quando reinicia), pelo `$.session.usage()` e pela ferramenta do app `get_usage` (do servidor `ccd_session_mgmt`, somente leitura).
+- **Quando chama a ferramenta por conta própria:** ao iniciar a sessão, a cada 1 minuto, a cada mensagem enviada e ao fim de cada resposta. É a única ferramenta que ele chama; o modelo não participa.
+- **Não envia nada para fora:** não faz requisições de rede, não grava arquivos, não executa comandos nem lê o conteúdo da conversa. Os eventos `prompt.submit` e `turn.complete` só servem de gatilho para atualizar o número; o texto da mensagem não é lido nem repassado.
+- **Mostra:** uma linha na barra de baixo (`$.ui.status`) e o comando `/cota` com o detalhe.
