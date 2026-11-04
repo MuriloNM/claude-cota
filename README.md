@@ -50,6 +50,8 @@ Start-Process claude.exe -ArgumentList '--user-data-dir="C:\caminho\do\perfil"'
 
 Além disso, uma leitura guardada cujo reset difere em mais de 30 minutos do da sessão atual é descartada (é de outra conta). O `/cota` mostra a `fonte:` usada.
 
+Se o plugin perceber duas contas gravando no perfil `padrao` (nenhum perfil definido), ele mostra `⚠ perfil` na barra e a explicação no `/cota`. Sem sinal de segunda conta, não avisa.
+
 ## O que o plugin faz (transparência)
 
 - **Lê:** só a cota de uso da conta (limite semanal e quando reinicia), pelo `$.session.usage()` e pela ferramenta do app `get_usage` (do servidor `ccd_session_mgmt`, somente leitura).

@@ -41,6 +41,10 @@ const INTERVALO_APP_MS = 5 * MIN_MS
 type Leitura = { percentUsed: number; resetsAt: string; lido: number }
 type JanelaDoApp = { label: string; percentUsed: number; resetsAt?: string }
 let erroDoApp = ''
+// Só avisa quando há prova de duas contas na mesma chave e nenhum perfil definido (chave "padrao").
+let semPerfil = false
+let conflito = false
+const AVISO = 'Duas contas usando o mesmo perfil: defina CLAUDE_PERFIL em cada app (veja o README do plugin).'
 let fonte = ''
 let ultimaConsulta = 0
 
@@ -53,6 +57,7 @@ async function chavePerfil($: EngineInterface): Promise<string> {
 
 async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura | undefined> {
   const chave = await chavePerfil($)
+  semPerfil = chave === 'ultima:padrao'
   const guardada = (await $.store.get(chave)) as Leitura | undefined
   if (agora - ultimaConsulta < INTERVALO_APP_MS) return guardada
   ultimaConsulta = agora
@@ -66,6 +71,9 @@ async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura 
     if (!semana?.resetsAt) { erroDoApp = dados?.plan?.status ?? 'sem janela semanal'; return guardada }
     erroDoApp = ''
     const nova: Leitura = { percentUsed: semana.percentUsed, resetsAt: semana.resetsAt, lido: agora }
+    // Leitura ainda válida, de outro reset: outra conta gravou nesta mesma chave.
+    if (semPerfil && guardada && Date.parse(guardada.resetsAt) > agora &&
+        Math.abs(Date.parse(guardada.resetsAt) - Date.parse(nova.resetsAt)) >= TOLERANCIA_RESET_MS) conflito = true
     await $.store.set(chave, nova)
     return nova
   } catch (err) {
@@ -88,6 +96,7 @@ async function atualiza($: EngineInterface): Promise<string | undefined> {
   const mesmaConta = !app || !sessao?.resetsAt ||
     Math.abs(Date.parse(app.resetsAt) - Date.parse(sessao.resetsAt)) < TOLERANCIA_RESET_MS
   const daSemana = app && mesmaConta && Date.parse(app.resetsAt) > agora ? app : undefined
+  if (app && !mesmaConta && semPerfil) conflito = true
   if (app && !mesmaConta) erroDoApp = (erroDoApp ? erroDoApp + '; ' : '') + 'leitura guardada de outra conta descartada'
   const recente = daSemana && agora - daSemana.lido < VALIDADE_APP_MS ? daSemana : undefined
   let janela: Janela | undefined
@@ -101,7 +110,8 @@ async function atualiza($: EngineInterface): Promise<string | undefined> {
   const minutos = daSemana ? Math.round((agora - daSemana.lido) / MIN_MS) : 0
   fonte = (recente || (!sessao && daSemana)) ? `app (lido há ${minutos} min)${erroDoApp ? `; última consulta: ${erroDoApp}` : ''}` : sessao ? 'sessão' : 'nenhuma'
   const janelas = janela ? [janela] : []
-  $.ui.status(linha(janelas, agora, true))
+  const curta = linha(janelas, agora, true)
+  $.ui.status(curta && conflito ? curta + ' ⚠ perfil' : curta)
   return janela ? linha(janelas, agora) : undefined
 }
 
@@ -114,7 +124,7 @@ export const register: Register = on => {
   on('command.run', { command: 'cota' }, async $ => {
     const t = await atualiza($)
     return { text: `${t ?? 'Cota semanal: sem dado ainda.'}
-fonte: ${fonte}` }
+fonte: ${fonte}${conflito ? '\n⚠ ' + AVISO : ''}` }
   })
 
   on('session.start', async ($, e, next) => {
