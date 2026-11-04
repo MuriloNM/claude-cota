@@ -44,8 +44,16 @@ let erroDoApp = ''
 let fonte = ''
 let ultimaConsulta = 0
 
+// Cada perfil/conta tem a sua leitura guardada. Quem abre mais de um app (conta pessoal e do trabalho) marca o perfil
+// com CLAUDE_PERFIL no atalho; sem isso vale o CLAUDE_CONFIG_DIR; sem nenhum dos dois, o perfil é "padrao".
+async function chavePerfil($: EngineInterface): Promise<string> {
+  const bruto = (await $.env.get('CLAUDE_PERFIL')) || (await $.env.get('CLAUDE_CONFIG_DIR')) || 'padrao'
+  return 'ultima:' + bruto.replace(/[^\w.-]+/g, '_').slice(-60)
+}
+
 async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura | undefined> {
-  const guardada = (await $.store.get('ultima')) as Leitura | undefined
+  const chave = await chavePerfil($)
+  const guardada = (await $.store.get(chave)) as Leitura | undefined
   if (agora - ultimaConsulta < INTERVALO_APP_MS) return guardada
   ultimaConsulta = agora
   try {
@@ -58,7 +66,7 @@ async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura 
     if (!semana?.resetsAt) { erroDoApp = dados?.plan?.status ?? 'sem janela semanal'; return guardada }
     erroDoApp = ''
     const nova: Leitura = { percentUsed: semana.percentUsed, resetsAt: semana.resetsAt, lido: agora }
-    await $.store.set('ultima', nova)
+    await $.store.set(chave, nova)
     return nova
   } catch (err) {
     erroDoApp = String(err).slice(0, 120)
@@ -70,12 +78,18 @@ async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura 
 // pontos para mais ou para menos, então só entra quando não há leitura do card da última hora (no terminal, por
 // exemplo, que não tem o card, mas reaproveita a leitura que o desktop guardou).
 const VALIDADE_APP_MS = 60 * MIN_MS
+const TOLERANCIA_RESET_MS = 30 * MIN_MS
 async function atualiza($: EngineInterface): Promise<string | undefined> {
   const agora = await $.clock.now()
   const app = await leituraDoApp($, agora)
-  const daSemana = app && Date.parse(app.resetsAt) > agora ? app : undefined
-  const recente = daSemana && agora - daSemana.lido < VALIDADE_APP_MS ? daSemana : undefined
   const sessao = (await $.session.usage()).rateLimits.find(x => x.kind === 'seven_day')
+  // O store é da máquina inteira: outra conta ou projeto pode ter gravado ali. A sessão sabe a que conta pertence;
+  // se o resetsAt guardado não bate com o dela, a leitura é de outra conta e não vale.
+  const mesmaConta = !app || !sessao?.resetsAt ||
+    Math.abs(Date.parse(app.resetsAt) - Date.parse(sessao.resetsAt)) < TOLERANCIA_RESET_MS
+  const daSemana = app && mesmaConta && Date.parse(app.resetsAt) > agora ? app : undefined
+  if (app && !mesmaConta) erroDoApp = (erroDoApp ? erroDoApp + '; ' : '') + 'leitura guardada de outra conta descartada'
+  const recente = daSemana && agora - daSemana.lido < VALIDADE_APP_MS ? daSemana : undefined
   let janela: Janela | undefined
   if (recente) {
     janela = { kind: 'seven_day', percentUsed: recente.percentUsed, resetsAt: recente.resetsAt }

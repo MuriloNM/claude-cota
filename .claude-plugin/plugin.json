@@ -1,6 +1,6 @@
 {
   "name": "cota",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Ritmo da cota semanal do Claude na barra de baixo do app desktop: usado x esperado pelo tempo decorrido e projeção de fechamento da semana.",
   "author": { "name": "MuriloNM" },
   "license": "MIT"
