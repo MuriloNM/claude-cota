@@ -1,5 +1,6 @@
 {
   "name": "claude-cota",
+  "description": "Plugin que mostra se o uso da cota semanal do Claude está no ritmo certo.",
   "owner": { "name": "MuriloNM" },
   "plugins": [{ "name": "cota", "source": "./" }]
 }
