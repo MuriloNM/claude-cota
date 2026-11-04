@@ -154,8 +154,11 @@ async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura 
         Math.abs(Date.parse(guardada.resetsAt) - Date.parse(nova.resetsAt)) >= TOLERANCIA_RESET_MS) conflito = true
     await $.store.set(chave, nova)
     return nova
-  } catch (err) {
-    erroDoApp = String(err).slice(0, 120)
+  } catch {
+    // A consulta nem foi respondida (servidor do app desconectado): não gasta o intervalo de 5 min e tenta de novo
+    // na próxima vez. O limite do get_usage volta como dado, não como exceção, e segue respeitando o intervalo.
+    ultimaConsulta = 0
+    erroDoApp = 'app sem resposta agora'
     return guardada
   }
 }
@@ -186,7 +189,8 @@ async function atualiza($: EngineInterface): Promise<string | undefined> {
     janela = { kind: 'seven_day', percentUsed: daSemana.percentUsed, resetsAt: daSemana.resetsAt }
   }
   const minutos = daSemana ? Math.round((agora - daSemana.lido) / MIN_MS) : 0
-  fonte = (recente || (!sessao && daSemana)) ? `app (lido há ${minutos} min)${erroDoApp ? `; última consulta: ${erroDoApp}` : ''}` : sessao ? 'sessão' : 'nenhuma'
+  const idade = minutos < 60 ? `${minutos} min` : `${Math.floor(minutos / 60)} h${minutos % 60 ? ` ${minutos % 60} min` : ''}`
+  fonte = (recente || (!sessao && daSemana)) ? `app (lido há ${idade})${erroDoApp ? `; ${erroDoApp}` : ''}` : sessao ? 'sessão' : 'nenhuma'
   const janelas = janela ? [janela] : []
   const curta = linha(janelas, agora, true)
   $.ui.status(curta && conflito ? curta + ' ⚠ perfil' : curta)

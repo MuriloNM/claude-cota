@@ -27,6 +27,31 @@ test('no terminal, a barra em texto com os mesmos números', async $ => {
   await ui.unmount()
 })
 
+test('app sem conexão: aviso curto, sem erro cru, e tenta de novo na vez seguinte', async ($, on) => {
+  const agora = Date.parse('2026-11-04T22:00:00Z')
+  const cmd = {
+    command: 'cota', args: '', origin: { kind: 'plugin', name: 'teste' },
+    presentation: { isFullscreen: false, columns: 80 },
+  } as const
+  on('command.register', () => ({ value: { command: 'cota' } }))
+  on('clock.now', () => ({ value: agora }))
+  on('env.get', () => ({ value: 'Trabalho' }))
+  on('store.get', () => ({
+    value: { percentUsed: 99, resetsAt: '2026-11-05T10:00:00Z', lido: agora - 140 * 60_000 },
+  }))
+  on('session.usage', () => ({ value: { rateLimits: [] } as never }))
+  on('ui.status', () => ({ value: undefined }))
+
+  // Sem hook de mcp.call, nada está conectado: a consulta falha como no app sem o servidor.
+  const primeira = await $.command.run(cmd)
+  const segunda = await $.command.run(cmd)
+
+  expect(primeira.text).toContain('lido há 2 h 20 min')
+  expect(primeira.text).toContain('app sem resposta agora')
+  expect(primeira.text).not.toContain('HooksError')
+  expect(segunda.text).toContain('app sem resposta agora')
+})
+
 test('sem dado, fica a linha normal do engine', async ($, on) => {
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
