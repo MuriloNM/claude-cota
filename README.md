@@ -9,7 +9,16 @@ Mostra na barra de baixo do app desktop do Claude (aba Code) se o uso da cota se
 - **→ 78%**: onde você fecha a semana se mantiver o ritmo atual.
 - **Cor**: 🟢 folga, 🟡 no ritmo, 🔴 acima do ritmo (limite de 5 pontos).
 
-O comando `/cota` mostra o detalhe: projeção, dias até o reset e quanto dá para gastar por dia.
+O comando `/cota` abre um cartão com o detalhe: uso, barra com o esperado para hoje e a projeção, dias até o reset e quanto dá para gastar por dia. No app desktop, no VS Code e no celular é um cartão gráfico; no terminal, a mesma barra em caracteres:
+
+```
+Cota semanal 18%  ● Folga
+███████▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░░░░░░░░░░░░░░░░░
+            ▲ esperado hoje 31%
+fecha em 58% · reseta em 4,8 dias · pode gastar 17%/dia
+```
+
+Sem leitura da cota, o `/cota` responde com uma linha de texto.
 
 ## Instalar
 
@@ -59,4 +68,4 @@ Se o plugin perceber duas contas gravando no perfil `padrao` (nenhum perfil defi
 - **Lê também** as variáveis de ambiente `CLAUDE_PERFIL` e `CLAUDE_CONFIG_DIR`, só para nomear o perfil.
 - **Guarda:** só a última leitura da cota (porcentagem, data do reset e hora da leitura), uma por perfil, no armazenamento do próprio plugin (`$.store`), para já abrir a sessão com o número certo.
 - **Não envia nada para fora:** não faz requisições de rede, não executa comandos nem lê o conteúdo da conversa. O evento `turn.complete` só serve de gatilho para atualizar o número; o texto da resposta não é lido nem repassado.
-- **Mostra:** uma linha na barra de baixo (`$.ui.status`) e o comando `/cota` com o detalhe.
+- **Mostra:** uma linha na barra de baixo (`$.ui.status`) e o comando `/cota` com o cartão do detalhe. O cartão é desenhado só com o texto da própria resposta do `/cota`, sem carregar nada de fora.
