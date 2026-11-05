@@ -121,14 +121,59 @@ async function idioma($: EngineInterface): Promise<Textos> {
 
 const EMOJI: Record<Sinal, string> = { folga: '🟢', ritmo: '🟡', acima: '🔴' }
 
-function linha(janelas: readonly Janela[], agora: number, t: Textos, curta = false): string | undefined {
+// Dias que contam no ritmo, por perfil: só alguns dias da semana (0 = domingo) e folgas por data, como um feriado.
+// Ficam em ~/.cota-barra/dias.json, que o /cota dias e o /cota folga gravam e a pílula do cota-barra também lê e grava.
+export type DiasConta = { semana?: string; folgas?: string[] }
+async function arquivoDias($: EngineInterface): Promise<string | undefined> {
+  const casa = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
+  return casa ? `${casa.replace(/[\\/]+$/, '')}/.cota-barra/dias.json` : undefined
+}
+async function lerDias($: EngineInterface): Promise<Record<string, DiasConta>> {
+  const arq = await arquivoDias($)
+  if (!arq) return {}
+  try {
+    const j = JSON.parse(String(await $.fs.read(arq)))
+    return j && typeof j === 'object' && !Array.isArray(j) ? j : {}
+  } catch { return {} }
+}
+export function dataLocal(ms: number): string {
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function semanaDe(d: DiasConta): string { return d.semana && /[0-6]/.test(d.semana) ? d.semana : '0123456' }
+function contaNoDia(d: DiasConta, ms: number): boolean {
+  return semanaDe(d).includes(String(new Date(ms).getDay())) && !(d.folgas ?? []).includes(dataLocal(ms))
+}
+// Tempo, em ms, dos dias que contam entre dois instantes.
+export function ativoMs(a: number, b: number, d: DiasConta): number {
+  let total = 0
+  const dia = new Date(a); dia.setHours(0, 0, 0, 0)
+  while (dia.getTime() < b) {
+    const ini = dia.getTime()
+    dia.setDate(dia.getDate() + 1)
+    if (contaNoDia(d, ini)) total += Math.max(0, Math.min(b, dia.getTime()) - Math.max(a, ini))
+  }
+  return total
+}
+
+function linha(janelas: readonly Janela[], agora: number, t: Textos, curta = false, contam?: DiasConta): string | undefined {
   const j = janelas.find(x => x.kind === 'seven_day')
   if (!j || !j.resetsAt) {
     return `${t.cota}: ${t.semDado}${appSemResposta ? ` (${t.semResposta})` : ''}`
   }
-  const resta = Date.parse(j.resetsAt) - agora
+  const fim = Date.parse(j.resetsAt)
+  const resta = fim - agora
   if (Number.isNaN(resta)) return undefined
-  const decorrido = Math.min(Math.max(1 - resta / SEMANA_MS, 0), 1)
+  let decorrido = Math.min(Math.max(1 - resta / SEMANA_MS, 0), 1)
+  let diasQueContam = Math.max(resta, 0) / 86_400_000
+  // O esperado só anda nos dias que contam; nos outros, fica parado.
+  if (contam) {
+    const total = ativoMs(fim - SEMANA_MS, fim, contam)
+    if (total > 0) {
+      decorrido = Math.min(Math.max(ativoMs(fim - SEMANA_MS, agora, contam) / total, 0), 1)
+      diasQueContam = ativoMs(agora, fim, contam) / 86_400_000
+    }
+  }
   const ideal = decorrido * 100
   const usado = j.percentUsed
   const dif = usado - ideal
@@ -137,7 +182,7 @@ function linha(janelas: readonly Janela[], agora: number, t: Textos, curta = fal
 
   const sinal: Sinal = dif > 5 ? 'acima' : dif < -5 ? 'folga' : 'ritmo'
   const sobra = Math.max(100 - usado, 0)
-  const porDia = dias > 0.05 ? ` · ${t.gastar} ${(sobra / dias).toFixed(0)}%/${t.porDia}` : ''
+  const porDia = diasQueContam > 0.05 ? ` · ${t.gastar} ${(sobra / diasQueContam).toFixed(0)}%/${t.porDia}` : ''
 
   if (curta) {
     return `${EMOJI[sinal]} ${t.semana} ${usado.toFixed(0)}% / ${ideal.toFixed(0)}% → ${projecao.toFixed(0)}%`
@@ -327,9 +372,67 @@ async function atualiza($: EngineInterface, t: Textos): Promise<string | undefin
   const notas = [appSemResposta && t.semResposta, outraConta && t.outraConta].filter(Boolean).join('; ')
   fonte = (recente || (!sessao && daSemana)) ? `${t.app(idade)}${notas ? `; ${notas}` : ''}` : sessao ? t.sessao : t.nenhuma
   const janelas = janela ? [janela] : []
-  const curta = linha(janelas, agora, t, true)
+  const contam = (await lerDias($))[(await chavePerfil($)).slice('ultima:'.length)]
+  const curta = linha(janelas, agora, t, true, contam)
   $.ui.status(curta && conflito ? curta + ' ⚠ perfil' : curta)
-  return janela ? linha(janelas, agora, t) : undefined
+  return janela ? linha(janelas, agora, t, false, contam) : undefined
+}
+
+// /cota dias seg-sex | seg,qua,sex | todos   ·   /cota folga 10/11 (marca ou desmarca) | limpar
+const NOMES_DIA: Record<string, number> = {
+  dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6, 'sáb': 6,
+  sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
+}
+const ABREV = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb']
+export function semanaDoTexto(s: string): string | undefined {
+  const txt = s.trim().toLowerCase()
+  if (/^(todos|all|every)/.test(txt)) return '0123456'
+  const dias = new Set<number>()
+  for (const parte of txt.split(/[\s,]+/).filter(Boolean)) {
+    const [a, b] = parte.split('-')
+    const ia = NOMES_DIA[a?.slice(0, 3) ?? ''], ib = b === undefined ? ia : NOMES_DIA[b.slice(0, 3)]
+    if (ia === undefined || ib === undefined) return undefined
+    for (let i = ia; ; i = (i + 1) % 7) { dias.add(i); if (i === ib) break }
+  }
+  return dias.size ? [...dias].sort().join('') : undefined
+}
+function resumoDias(d: DiasConta | undefined): string {
+  const semana = d ? semanaDe(d) : '0123456'
+  const nomes = semana === '0123456' ? 'todos os dias' : [...semana].map(i => ABREV[Number(i)]).join(' ')
+  const folgas = (d?.folgas ?? []).map(f => f.slice(8, 10) + '/' + f.slice(5, 7))
+  return `Dias que contam: ${nomes}${folgas.length ? ` · folgas: ${folgas.join(' ')}` : ''}`
+}
+async function ajustarDias($: EngineInterface, args: string): Promise<string | undefined> {
+  const [cmd = '', ...resto] = args.trim().split(/\s+/)
+  if (cmd !== 'dias' && cmd !== 'folga') return undefined
+  const perfil = (await chavePerfil($)).slice('ultima:'.length)
+  const arq = await arquivoDias($)
+  if (!arq) return 'Não achei a pasta do usuário para guardar os dias.'
+  const todos = await lerDias($)
+  const d: DiasConta = { ...todos[perfil] }
+  const valor = resto.join(' ')
+  if (cmd === 'dias') {
+    if (!valor) return `${resumoDias(d)}\nUse, por exemplo: /cota dias seg-sex`
+    const semana = semanaDoTexto(valor)
+    if (!semana) return 'Não entendi os dias. Exemplos: /cota dias seg-sex, /cota dias seg,qua,sex, /cota dias todos'
+    d.semana = semana
+  } else {
+    if (/^(limpar|clear)$/i.test(valor)) d.folgas = []
+    else {
+      const m = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?$/.exec(valor)
+      if (!m) return `${resumoDias(d)}\nUse, por exemplo: /cota folga 10/11, ou /cota folga limpar`
+      const hoje = new Date(await $.clock.now())
+      const data = `${m[3] ?? hoje.getFullYear()}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
+      const lista = new Set(d.folgas ?? [])
+      if (lista.has(data)) lista.delete(data); else lista.add(data)
+      d.folgas = [...lista].sort()
+    }
+  }
+  if (semanaDe(d) === '0123456') delete d.semana
+  if (!d.folgas?.length) delete d.folgas
+  if (Object.keys(d).length) todos[perfil] = d; else delete todos[perfil]
+  await $.fs.write(arq, JSON.stringify(todos, null, 2))
+  return `${resumoDias(d)} (conta ${perfil})`
 }
 
 export const register: Register = on => {
@@ -338,7 +441,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'cota' }, async $ => {
+  on('command.run', { command: 'cota' }, async ($, e) => {
+    const ajuste = await ajustarDias($, e.args ?? '')
+    if (ajuste !== undefined) return { text: ajuste }
     const t = await idioma($)
     const texto = await atualiza($, t)
     return { text: `${texto ?? `${t.cota}: ${t.semDado}.`}

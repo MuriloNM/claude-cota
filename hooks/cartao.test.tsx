@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import { ativoMs, semanaDoTexto } from './register.js'
 
 const TEXTO =
   'Cota semanal 16% (esperado 30%) 🟢 folga · projeção 52% · reseta em 4.9d · pode gastar 17%/dia\nfonte: app (lido há 2 min)'
@@ -141,6 +142,58 @@ test('guarda a janela de 5 h e a semana por modelo no perfil da conta', async ($
     janelas: [{ nome: 'Fable', percentUsed: 2, resetsAt: '2026-11-12T10:00:00Z' }],
   })
   expect(guardado['ultima:Trabalho']).toEqual({ percentUsed: 15, resetsAt: '2026-11-12T10:00:00Z', lido: agora })
+})
+
+test('dias que contam: entende os jeitos de escrever', async () => {
+  expect(semanaDoTexto('seg-sex')).toBe('12345')
+  expect(semanaDoTexto('seg,qua,sex')).toBe('135')
+  expect(semanaDoTexto('sex-seg')).toBe('0156')
+  expect(semanaDoTexto('mon-fri')).toBe('12345')
+  expect(semanaDoTexto('todos')).toBe('0123456')
+  expect(semanaDoTexto('xyz')).toBeUndefined()
+  const seg = new Date(2026, 10, 9).getTime()
+  expect(ativoMs(seg, new Date(2026, 10, 16).getTime(), { semana: '12345' })).toBe(5 * 86_400_000)
+  expect(ativoMs(seg, new Date(2026, 10, 16).getTime(), { semana: '12345', folgas: ['2026-11-10'] })).toBe(4 * 86_400_000)
+})
+
+test('o esperado só anda nos dias que contam', async ($, on) => {
+  const agora = new Date(2026, 10, 11).getTime()   // quarta, 0h: passaram seg e ter
+  const reset = new Date(2026, 10, 16).toISOString()
+  idiomaDoClaude(on, 'Pt-br')
+  on('clock.now', () => ({ value: agora }))
+  on('env.get', () => ({ value: 'Trabalho' }))
+  on('store.get', () => ({ value: { percentUsed: 20, resetsAt: reset, lido: agora - 60_000 } }))
+  on('fs.read', () => ({ value: JSON.stringify({ Trabalho: { semana: '12345' } }) }))
+  on('session.usage', () => ({ value: { rateLimits: [] } as never }))
+  on('ui.status', () => ({ value: undefined }))
+  const r = await $.command.run({
+    command: 'cota', args: '', origin: { kind: 'plugin', name: 'teste' },
+    presentation: { isFullscreen: false, columns: 80 },
+  })
+  expect(r.text).toContain('(esperado 40%)')
+  expect(r.text).toContain('projeção 50%')
+})
+
+test('/cota dias e /cota folga gravam o arquivo da conta', async ($, on) => {
+  let gravado = '{}'
+  on('clock.now', () => ({ value: new Date(2026, 10, 5).getTime() }))
+  on('env.get', () => ({ value: 'Trabalho' }))
+  on('fs.read', () => ({ value: gravado }))
+  on('fs.write', (_, e) => {
+    gravado = e.text
+    return { value: undefined }
+  })
+  const run = (args: string) => $.command.run({
+    command: 'cota', args, origin: { kind: 'plugin', name: 'teste' },
+    presentation: { isFullscreen: false, columns: 80 },
+  })
+  expect((await run('dias seg-sex')).text).toContain('Dias que contam: seg ter qua qui sex')
+  expect((await run('folga 10/11')).text).toContain('folgas: 10/11')
+  expect(JSON.parse(gravado)).toEqual({ Trabalho: { semana: '12345', folgas: ['2026-11-10'] } })
+  await run('folga 10/11')
+  await run('dias todos')
+  expect(JSON.parse(gravado)).toEqual({})
+  expect((await run('dias quinta-feira-santa')).text).toContain('Não entendi os dias')
 })
 
 test('sem dado, fica a linha normal do engine', async ($, on) => {
