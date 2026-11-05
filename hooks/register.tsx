@@ -5,11 +5,126 @@ const SEMANA_MS = 7 * 24 * 3600 * 1000
 const MIN_MS = 60_000
 
 type Janela = { kind: string; percentUsed: number; resetsAt?: string }
+type Sinal = 'folga' | 'ritmo' | 'acima'
 
-function linha(janelas: readonly Janela[], agora: number, curta = false): string | undefined {
+// Os textos seguem o idioma do Claude (linha `language` do /config, texto livre como "Pt-br" ou "japanese").
+// Sem essa linha, vale o idioma do sistema; idioma sem tradução aqui cai no inglês.
+type Textos = {
+  cota: string; usada: string; folga: string; ritmo: string; acima: string
+  esperadoHoje: string; esperado: string; fecha: string; reseta: string; gastar: string; projecao: string
+  semana: string; fonte: string; app: (idade: string) => string; sessao: string; nenhuma: string
+  semResposta: string; outraConta: string; semDado: string; aviso: string
+  dia: string; dias: string; porDia: string; virgula?: boolean; colado?: boolean
+}
+const TEXTOS: Record<'pt' | 'en' | 'es' | 'fr' | 'de' | 'it' | 'ja' | 'ko' | 'zh', Textos> = {
+  pt: {
+    cota: 'Cota semanal', usada: 'da cota usada', folga: 'Folga', ritmo: 'No ritmo', acima: 'Acima do ritmo',
+    esperadoHoje: 'esperado hoje', esperado: 'esperado', fecha: 'Fecha a semana em', reseta: 'Reseta em', gastar: 'Pode gastar', projecao: 'projeção',
+    semana: 'Semana', fonte: 'fonte', app: i => `app (lido há ${i})`, sessao: 'sessão', nenhuma: 'nenhuma',
+    semResposta: 'app sem resposta agora', outraConta: 'leitura de outra conta descartada', semDado: 'sem dado ainda',
+    aviso: 'Duas contas usando o mesmo perfil: defina CLAUDE_PERFIL em cada app (veja o README do plugin).',
+    dia: 'dia', dias: 'dias', porDia: 'dia', virgula: true,
+  },
+  en: {
+    cota: 'Weekly usage', usada: 'of limit used', folga: 'Room to spare', ritmo: 'On pace', acima: 'Over pace',
+    esperadoHoje: 'expected today', esperado: 'expected', fecha: 'Week ends at', reseta: 'Resets in', gastar: 'Can spend', projecao: 'projected',
+    semana: 'Week', fonte: 'source', app: i => `app (read ${i} ago)`, sessao: 'session', nenhuma: 'none',
+    semResposta: 'app not responding right now', outraConta: 'reading from another account discarded', semDado: 'no data yet',
+    aviso: 'Two accounts share one profile: set CLAUDE_PERFIL in each app (see the plugin README).',
+    dia: 'day', dias: 'days', porDia: 'day',
+  },
+  es: {
+    cota: 'Cuota semanal', usada: 'de la cuota usada', folga: 'Holgura', ritmo: 'Al ritmo', acima: 'Por encima del ritmo',
+    esperadoHoje: 'esperado hoy', esperado: 'esperado', fecha: 'Cierra la semana en', reseta: 'Se reinicia en', gastar: 'Puedes gastar', projecao: 'proyección',
+    semana: 'Semana', fonte: 'fuente', app: i => `app (leído hace ${i})`, sessao: 'sesión', nenhuma: 'ninguna',
+    semResposta: 'la app no responde ahora', outraConta: 'lectura de otra cuenta descartada', semDado: 'aún sin datos',
+    aviso: 'Dos cuentas comparten un perfil: define CLAUDE_PERFIL en cada app (ver el README del plugin).',
+    dia: 'día', dias: 'días', porDia: 'día', virgula: true,
+  },
+  fr: {
+    cota: 'Quota hebdomadaire', usada: 'du quota utilisé', folga: 'Marge', ritmo: 'Dans le rythme', acima: 'Au-dessus du rythme',
+    esperadoHoje: 'attendu aujourd’hui', esperado: 'attendu', fecha: 'Fin de semaine à', reseta: 'Réinitialisé dans', gastar: 'Disponible', projecao: 'projection',
+    semana: 'Semaine', fonte: 'source', app: i => `app (lu il y a ${i})`, sessao: 'session', nenhuma: 'aucune',
+    semResposta: 'l’app ne répond pas', outraConta: 'lecture d’un autre compte ignorée', semDado: 'pas encore de données',
+    aviso: 'Deux comptes partagent un profil : définissez CLAUDE_PERFIL dans chaque app (voir le README).',
+    dia: 'jour', dias: 'jours', porDia: 'jour', virgula: true,
+  },
+  de: {
+    cota: 'Wochenkontingent', usada: 'des Kontingents genutzt', folga: 'Spielraum', ritmo: 'Im Plan', acima: 'Über dem Plan',
+    esperadoHoje: 'heute erwartet', esperado: 'erwartet', fecha: 'Woche endet bei', reseta: 'Zurückgesetzt in', gastar: 'Verfügbar', projecao: 'Prognose',
+    semana: 'Woche', fonte: 'Quelle', app: i => `App (vor ${i} gelesen)`, sessao: 'Sitzung', nenhuma: 'keine',
+    semResposta: 'App antwortet gerade nicht', outraConta: 'Messwert eines anderen Kontos verworfen', semDado: 'noch keine Daten',
+    aviso: 'Zwei Konten teilen ein Profil: CLAUDE_PERFIL in jeder App setzen (siehe Plugin-README).',
+    dia: 'Tag', dias: 'Tage', porDia: 'Tag', virgula: true,
+  },
+  it: {
+    cota: 'Quota settimanale', usada: 'della quota usata', folga: 'Margine', ritmo: 'In linea', acima: 'Sopra il ritmo',
+    esperadoHoje: 'previsto oggi', esperado: 'previsto', fecha: 'Fine settimana a', reseta: 'Si azzera tra', gastar: 'Puoi usare', projecao: 'proiezione',
+    semana: 'Settimana', fonte: 'fonte', app: i => `app (letto ${i} fa)`, sessao: 'sessione', nenhuma: 'nessuna',
+    semResposta: 'l’app non risponde ora', outraConta: 'lettura di un altro account scartata', semDado: 'ancora nessun dato',
+    aviso: 'Due account condividono un profilo: imposta CLAUDE_PERFIL in ogni app (vedi il README).',
+    dia: 'giorno', dias: 'giorni', porDia: 'giorno', virgula: true,
+  },
+  ja: {
+    cota: '週間クォータ', usada: '使用済み', folga: '余裕あり', ritmo: '順調', acima: 'ペース超過',
+    esperadoHoje: '今日の目安', esperado: '目安', fecha: '週末の見込み', reseta: 'リセットまで', gastar: '使用可能', projecao: '見込み',
+    semana: '週', fonte: 'ソース', app: i => `アプリ（${i}前に取得）`, sessao: 'セッション', nenhuma: 'なし',
+    semResposta: 'アプリの応答なし', outraConta: '別アカウントの値を破棄', semDado: 'データなし',
+    aviso: '2つのアカウントが同じプロファイルを使用中：各アプリで CLAUDE_PERFIL を設定してください（README 参照）。',
+    dia: '日', dias: '日', porDia: '日', colado: true,
+  },
+  ko: {
+    cota: '주간 할당량', usada: '사용됨', folga: '여유', ritmo: '적정', acima: '초과',
+    esperadoHoje: '오늘 예상', esperado: '예상', fecha: '주말 예상', reseta: '초기화까지', gastar: '사용 가능', projecao: '예상치',
+    semana: '주간', fonte: '출처', app: i => `앱 (${i} 전 읽음)`, sessao: '세션', nenhuma: '없음',
+    semResposta: '앱 응답 없음', outraConta: '다른 계정 값 무시', semDado: '데이터 없음',
+    aviso: '두 계정이 같은 프로필을 사용 중: 각 앱에서 CLAUDE_PERFIL을 설정하세요 (README 참고).',
+    dia: '일', dias: '일', porDia: '일', colado: true,
+  },
+  zh: {
+    cota: '每周配额', usada: '已使用', folga: '宽裕', ritmo: '正常', acima: '超速',
+    esperadoHoje: '今日预期', esperado: '预期', fecha: '周末预计', reseta: '重置还有', gastar: '可用', projecao: '预计',
+    semana: '本周', fonte: '来源', app: i => `应用（${i}前读取）`, sessao: '会话', nenhuma: '无',
+    semResposta: '应用暂无响应', outraConta: '已丢弃其他账户的读数', semDado: '暂无数据',
+    aviso: '两个账户共用一个配置：请在每个应用中设置 CLAUDE_PERFIL（见 README）。',
+    dia: '天', dias: '天', porDia: '天', colado: true,
+  },
+}
+
+function traducao(nome: string): Textos | undefined {
+  const n = nome.trim().toLowerCase()
+  if (/^(pt|port)/.test(n)) return TEXTOS.pt
+  if (/^(en\b|en[-_]|eng|ingl)/.test(n)) return TEXTOS.en
+  if (/^(es\b|es[-_]|span|espa)/.test(n)) return TEXTOS.es
+  if (/^(fr\b|fr[-_]|fren|fran)/.test(n)) return TEXTOS.fr
+  if (/^(de\b|de[-_]|germ|deut|alem)/.test(n)) return TEXTOS.de
+  if (/^(it\b|it[-_]|ital)/.test(n)) return TEXTOS.it
+  if (/^(ja\b|ja[-_]|jap|日本)/.test(n)) return TEXTOS.ja
+  if (/^(ko\b|ko[-_]|kor|한국)/.test(n)) return TEXTOS.ko
+  if (/^(zh\b|zh[-_]|chin|中文|简体|繁體)/.test(n)) return TEXTOS.zh
+  return undefined
+}
+
+export function textosDe(language: string | undefined, sistema: string): Textos {
+  if (language) return traducao(language) ?? TEXTOS.en
+  return traducao(sistema) ?? TEXTOS.en
+}
+
+async function idioma($: EngineInterface): Promise<Textos> {
+  let language: string | undefined
+  try {
+    const v = (await $.config.list()).find(l => l.key === 'language')?.value
+    if (typeof v === 'string' && v.trim()) language = v
+  } catch { /* sem /config: fica o idioma do sistema */ }
+  return textosDe(language, Intl.DateTimeFormat().resolvedOptions().locale)
+}
+
+const EMOJI: Record<Sinal, string> = { folga: '🟢', ritmo: '🟡', acima: '🔴' }
+
+function linha(janelas: readonly Janela[], agora: number, t: Textos, curta = false): string | undefined {
   const j = janelas.find(x => x.kind === 'seven_day')
   if (!j || !j.resetsAt) {
-    return `Cota semanal: sem dado (janelas: ${janelas.map(x => x.kind).join(', ') || 'nenhuma'}${erroDoApp ? '; ' + erroDoApp : ''})`
+    return `${t.cota}: ${t.semDado}${appSemResposta ? ` (${t.semResposta})` : ''}`
   }
   const resta = Date.parse(j.resetsAt) - agora
   if (Number.isNaN(resta)) return undefined
@@ -20,95 +135,103 @@ function linha(janelas: readonly Janela[], agora: number, curta = false): string
   const projecao = decorrido > 0.02 ? usado / decorrido : usado
   const dias = Math.max(resta, 0) / 86_400_000
 
-  const sinal = dif > 5 ? '🔴 acima do ritmo' : dif < -5 ? '🟢 folga' : '🟡 no ritmo'
+  const sinal: Sinal = dif > 5 ? 'acima' : dif < -5 ? 'folga' : 'ritmo'
   const sobra = Math.max(100 - usado, 0)
-  const porDia = dias > 0.05 ? ` · pode gastar ${(sobra / dias).toFixed(0)}%/dia` : ''
+  const porDia = dias > 0.05 ? ` · ${t.gastar} ${(sobra / dias).toFixed(0)}%/${t.porDia}` : ''
 
   if (curta) {
-    const cor = sinal.split(' ')[0]
-    return `${cor} Semana ${usado.toFixed(0)}% / ${ideal.toFixed(0)}% → ${projecao.toFixed(0)}%`
+    return `${EMOJI[sinal]} ${t.semana} ${usado.toFixed(0)}% / ${ideal.toFixed(0)}% → ${projecao.toFixed(0)}%`
   }
   return (
-    `Cota semanal ${usado.toFixed(0)}% (esperado ${ideal.toFixed(0)}%) ${sinal} ` +
-    `· projeção ${projecao.toFixed(0)}% · reseta em ${dias.toFixed(1)}d${porDia}`
+    `${t.cota} ${usado.toFixed(0)}% (${t.esperado} ${ideal.toFixed(0)}%) ${EMOJI[sinal]} ${t[sinal]} ` +
+    `· ${t.projecao} ${projecao.toFixed(0)}% · ${t.reseta} ${dias.toFixed(1)}d${porDia}`
   )
 }
 
 // O cartão do /cota se desenha do texto da própria linha: cada /cota antigo da conversa continua mostrando a sua leitura,
-// e o modelo e as superfícies sem desenho seguem lendo o mesmo texto.
-type Sinal = 'folga' | 'ritmo' | 'acima'
+// e o modelo e as superfícies sem desenho seguem lendo o mesmo texto. A leitura vale para qualquer idioma: só olha os
+// números, os emojis e os separadores, nunca as palavras.
 export type Cartao = {
   usado: number; ideal: number; sinal: Sinal; projecao: number; dias: number
   porDia?: number; fonte?: string; aviso?: string
 }
-const SINAIS: Record<Sinal, { nome: string; cor: string; tema: 'success' | 'warning' | 'error' }> = {
-  folga: { nome: 'Folga', cor: '#0ca30c', tema: 'success' },
-  ritmo: { nome: 'No ritmo', cor: '#fab219', tema: 'warning' },
-  acima: { nome: 'Acima do ritmo', cor: '#d03b3b', tema: 'error' },
+const COR: Record<Sinal, { cor: string; tema: 'success' | 'warning' | 'error' }> = {
+  folga: { cor: '#0ca30c', tema: 'success' },
+  ritmo: { cor: '#fab219', tema: 'warning' },
+  acima: { cor: '#d03b3b', tema: 'error' },
 }
 
 export function leCartao(texto: string): Cartao | undefined {
-  const m = /Cota semanal (\d+)% \(esperado (\d+)%\) (🔴|🟢|🟡)[^·]*· projeção (\d+)% · reseta em ([\d.]+)d(?: · pode gastar (\d+)%\/dia)?/u.exec(texto)
+  const [primeira = '', ...resto] = texto.split('\n')
+  const m = /(\d+)% \([^)]*?(\d+)%\) (🔴|🟢|🟡)[^·]*·[^·]*?(\d+)%[^·]*·[^·\d]*([\d.]+)[^·]*(?:·[^·\d]*(\d+)%)?/u.exec(primeira)
   if (!m) return undefined
   const sinal: Sinal = m[3] === '🟢' ? 'folga' : m[3] === '🔴' ? 'acima' : 'ritmo'
   return {
     usado: Number(m[1]), ideal: Number(m[2]), sinal, projecao: Number(m[4]), dias: Number(m[5]),
     porDia: m[6] === undefined ? undefined : Number(m[6]),
-    fonte: /^fonte: (.*)$/mu.exec(texto)?.[1],
-    aviso: /^⚠ (.*)$/mu.exec(texto)?.[1],
+    fonte: resto.find(l => l.trim() && !l.startsWith('⚠')),
+    aviso: resto.find(l => l.startsWith('⚠'))?.replace(/^⚠\s*/u, ''),
   }
 }
 
-function prazo(dias: number): string {
-  return dias < 1 ? `${Math.round(dias * 24)} h` : `${dias.toFixed(1).replace('.', ',')} ${dias < 2 ? 'dia' : 'dias'}`
+function prazo(dias: number, t: Textos): string {
+  if (dias < 1) return `${Math.round(dias * 24)} h`
+  const n = dias.toFixed(1)
+  return `${t.virgula ? n.replace('.', ',') : n}${t.colado ? '' : ' '}${dias < 2 ? t.dia : t.dias}`
 }
 
-function xml(t: string): string {
-  return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+function xml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+// Largura aproximada: letras de japonês, coreano e chinês ocupam quase o dobro.
+function largura(s: string): number {
+  return [...s].reduce((soma, c) => soma + (c.charCodeAt(0) > 0x2e7f ? 12.5 : 7), 0)
 }
 
 // Vira imagem isolada: sem acesso ao tema do app. As cores claras vão nos atributos e o CSS só escurece,
 // e o cartão tem fundo próprio, então continua legível mesmo se o tema do app e o do sistema divergirem.
-export function cartaoSvg(c: Cartao): string {
-  const { nome, cor } = SINAIS[c.sinal]
+export function cartaoSvg(c: Cartao, t: Textos): string {
+  const { cor } = COR[c.sinal]
+  const nome = t[c.sinal]
   const L = 520, X0 = 24, BARRA = L - 2 * X0, Y = 102, H = 12
   const px = (p: number) => X0 + (Math.min(Math.max(p, 0), 100) / 100) * BARRA
   const pxUso = px(c.usado), pxProj = px(c.projecao), pxIdeal = px(c.ideal)
   const ancora = pxIdeal < 80 ? 'start' : pxIdeal > L - 80 ? 'end' : 'middle'
-  const largPill = nome.length * 7 + 32
+  const largPill = Math.ceil(largura(nome)) + 32
   const xPill = L - X0 - largPill
   const altura = c.aviso ? 222 : 204
   const tiles = [
-    { x: X0, rot: 'Fecha a semana em', val: `${c.projecao}%`, amostra: true },
-    { x: X0 + 180, rot: 'Reseta em', val: prazo(c.dias), amostra: false },
-    { x: X0 + 310, rot: 'Pode gastar', val: c.porDia === undefined ? '—' : `${c.porDia}% / dia`, amostra: false },
+    { x: X0, rot: t.fecha, val: `${c.projecao}%`, amostra: true },
+    { x: X0 + 180, rot: t.reseta, val: prazo(c.dias, t), amostra: false },
+    { x: X0 + 310, rot: t.gastar, val: c.porDia === undefined ? '—' : `${c.porDia}% / ${t.porDia}`, amostra: false },
   ]
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${L}" height="${altura}" viewBox="0 0 ${L} ${altura}" font-family="system-ui,-apple-system,'Segoe UI',sans-serif">
 <style>@media (prefers-color-scheme:dark){.bg{fill:#1a1a19;stroke:#33332f}.ink{fill:#f0efea}.mut{fill:#a3a29c}.trk{fill:#33332f}.tick{stroke:#f0efea}}</style>
 <rect class="bg" x="0.5" y="0.5" width="${L - 1}" height="${altura - 1}" rx="12" fill="#fcfcfb" stroke="#e7e6e2"/>
-<text class="mut" x="${X0}" y="32" font-size="13" fill="#6b6a65">Cota semanal</text>
+<text class="mut" x="${X0}" y="32" font-size="13" fill="#6b6a65">${xml(t.cota)}</text>
 <rect x="${xPill}" y="16" width="${largPill}" height="24" rx="12" fill="${cor}" fill-opacity="0.16"/>
 <circle cx="${xPill + 13}" cy="28" r="4" fill="${cor}"/>
-<text class="ink" x="${xPill + 23}" y="32" font-size="12" font-weight="600" fill="#1f1f1d">${nome}</text>
-<text class="ink" x="${X0}" y="74" fill="#1f1f1d"><tspan font-size="38" font-weight="600">${c.usado}%</tspan><tspan class="mut" dx="8" font-size="13" fill="#6b6a65">da cota usada</tspan></text>
-<text class="mut" x="${pxIdeal}" y="94" text-anchor="${ancora}" font-size="11" fill="#6b6a65">esperado hoje ${c.ideal}%</text>
+<text class="ink" x="${xPill + 23}" y="32" font-size="12" font-weight="600" fill="#1f1f1d">${xml(nome)}</text>
+<text class="ink" x="${X0}" y="74" fill="#1f1f1d"><tspan font-size="38" font-weight="600">${c.usado}%</tspan><tspan class="mut" dx="8" font-size="13" fill="#6b6a65">${xml(t.usada)}</tspan></text>
+<text class="mut" x="${pxIdeal}" y="94" text-anchor="${ancora}" font-size="11" fill="#6b6a65">${xml(t.esperadoHoje)} ${c.ideal}%</text>
 <rect class="trk" x="${X0}" y="${Y}" width="${BARRA}" height="${H}" rx="6" fill="#e7e6e2"/>
 ${pxProj > pxUso ? `<rect x="${X0}" y="${Y}" width="${pxProj - X0}" height="${H}" rx="6" fill="${cor}" fill-opacity="0.3"/>` : ''}
 ${c.usado > 0 ? `<rect x="${X0}" y="${Y}" width="${Math.max(pxUso - X0, H)}" height="${H}" rx="6" fill="${cor}"/>` : ''}
 <line class="tick" x1="${pxIdeal}" x2="${pxIdeal}" y1="${Y - 3}" y2="${Y + H + 3}" stroke="#1f1f1d" stroke-width="2"/>
-${tiles.map(t => `<g>${t.amostra ? `<rect x="${t.x}" y="134" width="10" height="10" rx="3" fill="${cor}" fill-opacity="0.3"/>` : ''}<text class="mut" x="${t.x + (t.amostra ? 15 : 0)}" y="143" font-size="11" fill="#6b6a65">${t.rot}</text><text class="ink" x="${t.x}" y="167" font-size="18" font-weight="600" fill="#1f1f1d">${t.val}</text></g>`).join('')}
-${c.fonte ? `<text class="mut" x="${X0}" y="191" font-size="10" fill="#6b6a65">fonte: ${xml(c.fonte.slice(0, 90))}</text>` : ''}
+${tiles.map(l => `<g>${l.amostra ? `<rect x="${l.x}" y="134" width="10" height="10" rx="3" fill="${cor}" fill-opacity="0.3"/>` : ''}<text class="mut" x="${l.x + (l.amostra ? 15 : 0)}" y="143" font-size="11" fill="#6b6a65">${xml(l.rot)}</text><text class="ink" x="${l.x}" y="167" font-size="18" font-weight="600" fill="#1f1f1d">${xml(l.val)}</text></g>`).join('')}
+${c.fonte ? `<text class="mut" x="${X0}" y="191" font-size="10" fill="#6b6a65">${xml(c.fonte.slice(0, 90))}</text>` : ''}
 ${c.aviso ? `<text x="${X0}" y="209" font-size="10" fill="#d03b3b">⚠ ${xml(c.aviso.slice(0, 95))}</text>` : ''}
 </svg>`
 }
 
 // A mesma barra em células, para o terminal (que não desenha Svg): █ usado, ▒ até a projeção, ░ o resto.
-export function barraTexto(c: Cartao, largura: number): { usado: string; projetado: string; resto: string; marca: string } {
-  const cel = (p: number) => Math.round((Math.min(Math.max(p, 0), 100) / 100) * largura)
+export function barraTexto(c: Cartao, celulas: number): { usado: string; projetado: string; resto: string; marca: string } {
+  const cel = (p: number) => Math.round((Math.min(Math.max(p, 0), 100) / 100) * celulas)
   const u = cel(c.usado), p = Math.max(cel(c.projecao), u)
   return {
-    usado: '█'.repeat(u), projetado: '▒'.repeat(p - u), resto: '░'.repeat(largura - p),
-    marca: ' '.repeat(Math.max(Math.min(cel(c.ideal), largura - 1), 0)) + '▲',
+    usado: '█'.repeat(u), projetado: '▒'.repeat(p - u), resto: '░'.repeat(celulas - p),
+    marca: ' '.repeat(Math.max(Math.min(cel(c.ideal), celulas - 1), 0)) + '▲',
   }
 }
 
@@ -118,11 +241,11 @@ export function barraTexto(c: Cartao, largura: number): { usado: string; projeta
 const INTERVALO_APP_MS = 5 * MIN_MS
 type Leitura = { percentUsed: number; resetsAt: string; lido: number }
 type JanelaDoApp = { label: string; percentUsed: number; resetsAt?: string }
-let erroDoApp = ''
+let appSemResposta = false
+let outraConta = false
 // Só avisa quando há prova de duas contas na mesma chave e nenhum perfil definido (chave "padrao").
 let semPerfil = false
 let conflito = false
-const AVISO = 'Duas contas usando o mesmo perfil: defina CLAUDE_PERFIL em cada app (veja o README do plugin).'
 let fonte = ''
 let ultimaConsulta = 0
 
@@ -151,14 +274,14 @@ async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura 
   ultimaConsulta = agora
   try {
     const r = await $.mcp.call('ccd_session_mgmt', 'get_usage', {})
-    if (r.isError) { erroDoApp = 'get_usage falhou'; return guardada }
+    if (r.isError) { appSemResposta = true; return guardada }
     const bloco = r.content.find(c => c.type === 'text') as { text: string } | undefined
     const dados = r.structuredContent ?? (bloco ? JSON.parse(bloco.text) : undefined)
     const janelas: JanelaDoApp[] = dados?.plan?.windows ?? []
     await guardarOutrasJanelas($, chave.slice('ultima:'.length), janelas, agora)
     const semana = janelas.find(j => /weekly/i.test(j.label) && /all models/i.test(j.label))
-    if (!semana?.resetsAt) { erroDoApp = dados?.plan?.status ?? 'sem janela semanal'; return guardada }
-    erroDoApp = ''
+    if (!semana?.resetsAt) { appSemResposta = true; return guardada }
+    appSemResposta = false
     const nova: Leitura = { percentUsed: semana.percentUsed, resetsAt: semana.resetsAt, lido: agora }
     // Leitura ainda válida, de outro reset: outra conta gravou nesta mesma chave.
     if (semPerfil && guardada && Date.parse(guardada.resetsAt) > agora &&
@@ -169,7 +292,7 @@ async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura 
     // A consulta nem foi respondida (servidor do app desconectado): não gasta o intervalo de 5 min e tenta de novo
     // na próxima vez. O limite do get_usage volta como dado, não como exceção, e segue respeitando o intervalo.
     ultimaConsulta = 0
-    erroDoApp = 'app sem resposta agora'
+    appSemResposta = true
     return guardada
   }
 }
@@ -179,7 +302,7 @@ async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura 
 // exemplo, que não tem o card, mas reaproveita a leitura que o desktop guardou).
 const VALIDADE_APP_MS = 60 * MIN_MS
 const TOLERANCIA_RESET_MS = 30 * MIN_MS
-async function atualiza($: EngineInterface): Promise<string | undefined> {
+async function atualiza($: EngineInterface, t: Textos): Promise<string | undefined> {
   const agora = await $.clock.now()
   const app = await leituraDoApp($, agora)
   const sessao = (await $.session.usage()).rateLimits.find(x => x.kind === 'seven_day')
@@ -189,7 +312,7 @@ async function atualiza($: EngineInterface): Promise<string | undefined> {
     Math.abs(Date.parse(app.resetsAt) - Date.parse(sessao.resetsAt)) < TOLERANCIA_RESET_MS
   const daSemana = app && mesmaConta && Date.parse(app.resetsAt) > agora ? app : undefined
   if (app && !mesmaConta && semPerfil) conflito = true
-  if (app && !mesmaConta) erroDoApp = (erroDoApp ? erroDoApp + '; ' : '') + 'leitura guardada de outra conta descartada'
+  outraConta = !!app && !mesmaConta
   const recente = daSemana && agora - daSemana.lido < VALIDADE_APP_MS ? daSemana : undefined
   let janela: Janela | undefined
   if (recente) {
@@ -201,50 +324,52 @@ async function atualiza($: EngineInterface): Promise<string | undefined> {
   }
   const minutos = daSemana ? Math.round((agora - daSemana.lido) / MIN_MS) : 0
   const idade = minutos < 60 ? `${minutos} min` : `${Math.floor(minutos / 60)} h${minutos % 60 ? ` ${minutos % 60} min` : ''}`
-  fonte = (recente || (!sessao && daSemana)) ? `app (lido há ${idade})${erroDoApp ? `; ${erroDoApp}` : ''}` : sessao ? 'sessão' : 'nenhuma'
+  const notas = [appSemResposta && t.semResposta, outraConta && t.outraConta].filter(Boolean).join('; ')
+  fonte = (recente || (!sessao && daSemana)) ? `${t.app(idade)}${notas ? `; ${notas}` : ''}` : sessao ? t.sessao : t.nenhuma
   const janelas = janela ? [janela] : []
-  const curta = linha(janelas, agora, true)
+  const curta = linha(janelas, agora, t, true)
   $.ui.status(curta && conflito ? curta + ' ⚠ perfil' : curta)
-  return janela ? linha(janelas, agora) : undefined
+  return janela ? linha(janelas, agora, t) : undefined
 }
 
 export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
-    await atualiza($)
+    await atualiza($, await idioma($))
     return next(e)
   })
 
   on('command.run', { command: 'cota' }, async $ => {
-    const t = await atualiza($)
-    return { text: `${t ?? 'Cota semanal: sem dado ainda.'}
-fonte: ${fonte}${conflito ? '\n⚠ ' + AVISO : ''}` }
+    const t = await idioma($)
+    const texto = await atualiza($, t)
+    return { text: `${texto ?? `${t.cota}: ${t.semDado}.`}
+${t.fonte}: ${fonte}${conflito ? '\n⚠ ' + t.aviso : ''}` }
   })
 
-  on('ui.render', { component: 'CommandOutput', props: { command: 'cota' } }, ($, e, next) => {
+  on('ui.render', { component: 'CommandOutput', props: { command: 'cota' } }, async ($, e, next) => {
     const c = leCartao(e.props.text)
     if (!c) return next(e)
-    const alt = e.props.text
+    const t = await idioma($)
     if (e.surface !== 'terminal') {
       const { Svg } = $.ui.resolve(e)
-      return <Svg source={cartaoSvg(c)} alt={alt} />
+      return <Svg source={cartaoSvg(c, t)} alt={e.props.text} />
     }
     const { Box, Text } = $.ui.resolve(e)
-    const { nome, tema } = SINAIS[c.sinal]
+    const { tema } = COR[c.sinal]
     const b = barraTexto(c, Math.min(40, Math.max(10, (e.viewport?.columns ?? 80) - 4)))
     return (
       <Box flexDirection="column">
         <Text>
-          <Text bold>Cota semanal {c.usado}%</Text>  <Text color={tema}>● {nome}</Text>
+          <Text bold>{t.cota} {c.usado}%</Text>  <Text color={tema}>● {t[c.sinal]}</Text>
         </Text>
         <Text>
           <Text color={tema}>{b.usado}{b.projetado}</Text>
           <Text dimColor>{b.resto}</Text>
         </Text>
-        <Text dimColor>{b.marca} esperado hoje {c.ideal}%</Text>
+        <Text dimColor>{b.marca} {t.esperadoHoje} {c.ideal}%</Text>
         <Text>
-          fecha em {c.projecao}% · reseta em {prazo(c.dias)}{c.porDia === undefined ? '' : ` · pode gastar ${c.porDia}%/dia`}
+          {t.fecha} {c.projecao}% · {t.reseta} {prazo(c.dias, t)}{c.porDia === undefined ? '' : ` · ${t.gastar} ${c.porDia}%/${t.porDia}`}
         </Text>
-        {c.fonte !== undefined && <Text dimColor>fonte: {c.fonte}</Text>}
+        {c.fonte !== undefined && <Text dimColor>{c.fonte}</Text>}
         {c.aviso !== undefined && <Text color="warning">⚠ {c.aviso}</Text>}
       </Box>
     )
@@ -253,7 +378,7 @@ fonte: ${fonte}${conflito ? '\n⚠ ' + AVISO : ''}` }
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'cota', description: 'Mostra o ritmo da cota semanal' })
     // Mostra já a última leitura guardada; depois atualiza a cada resposta.
-    void atualiza($)
+    void idioma($).then(t => atualiza($, t))
     return next(e)
   })
 }

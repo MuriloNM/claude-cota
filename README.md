@@ -1,71 +1,83 @@
 # cota
 
-Mostra na barra de baixo do app desktop do Claude (aba Code) se o uso da cota semanal está no ritmo certo:
+Shows whether your weekly Claude usage is on pace, right in the bottom bar of the Claude desktop app (Code tab):
 
-`🟢 Semana 49% / 61% → 78%`
+`🟢 Week 49% / 61% → 78%`
 
-- **49%**: quanto da cota semanal você já usou.
-- **61%**: quanto deveria ter usado até agora, se gastasse por igual ao longo da semana.
-- **→ 78%**: onde você fecha a semana se mantiver o ritmo atual.
-- **Cor**: 🟢 folga, 🟡 no ritmo, 🔴 acima do ritmo (limite de 5 pontos).
+- **49%**: how much of your weekly limit you have used.
+- **61%**: how much you would have used by now if you spent evenly across the week.
+- **→ 78%**: where the week ends if you keep the current pace.
+- **Color**: 🟢 room to spare, 🟡 on pace, 🔴 over pace (5-point margin).
 
-O comando `/cota` abre um cartão com o detalhe: uso, barra com o esperado para hoje e a projeção, dias até o reset e quanto dá para gastar por dia. No app desktop, no VS Code e no celular é um cartão gráfico; no terminal, a mesma barra em caracteres:
+The `/cota` command opens a card with the details: usage, a bar marking what is expected today and the projection, time until the reset, and how much you can spend per day. In the desktop app, VS Code and mobile it is a graphic card. In the terminal it is the same bar drawn in characters:
 
 ```
-Cota semanal 18%  ● Folga
+Weekly usage 18%  ● Room to spare
 ███████▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░░░░░░░░░░░░░░░░░
-            ▲ esperado hoje 31%
-fecha em 58% · reseta em 4,8 dias · pode gastar 17%/dia
+            ▲ expected today 31%
+Week ends at 58% · Resets in 4.8 days · Can spend 17%/day
 ```
 
-Sem leitura da cota, o `/cota` responde com uma linha de texto.
+With no usage reading available, `/cota` answers with one line of text.
 
-## Instalar
+## Languages
 
-No app desktop: clique em **+** ao lado do campo de texto, depois **Plugins**, **Add marketplace** com `MuriloNM/claude-cota`, e **Add plugin** `cota`.
+The card and the bottom bar follow Claude's language (the `language` row in `/config`): Portuguese, English, Spanish, French, German, Italian, Japanese, Korean and Chinese. If that row is empty, the plugin uses the system language. A language without a translation falls back to English.
 
-Pelo terminal:
+## Install
+
+In the desktop app: click **+** next to the text field, then **Plugins**, **Add marketplace** with `MuriloNM/claude-cota`, and **Add plugin** `cota`.
+
+From the terminal:
 
 ```
 claude plugin install cota --marketplace MuriloNM/claude-cota
 ```
 
-## Requisitos
+## Requirements
 
-- **Git instalado.** O app baixa o plugin do GitHub com o git. No Windows, instale pelo PowerShell e reabra o app:
+- **Git.** The app downloads the plugin from GitHub with git. On Windows, install it from PowerShell and reopen the app:
 
   ```
   winget install --id Git.Git -e
   ```
 
-  Depois de instalado o plugin fica na área interna do Claude e dá para remover pelo app (**Plugins**). O git pode ser desinstalado.
-- App desktop do Claude (aba Code) com plano que mostre os limites de uso no card de uso. Fora do desktop a cota vem da própria sessão e pode aparecer como "sem dado".
-- A linha atualiza ao fim de cada resposta. Na primeira sessão ela aparece depois da primeira resposta; nas seguintes já abre com a última leitura.
+  Once installed, the plugin lives in Claude's internal area and can be removed from the app (**Plugins**). Git can then be uninstalled.
+- The Claude desktop app (Code tab), on a plan that shows usage limits on the usage card. Outside the desktop app, usage comes from the session itself and may show as "no data".
+- The bottom bar updates at the end of each reply. In the first session it appears after the first reply; later sessions open with the last reading.
 
-## Mais de uma conta ou app aberto
+## More than one account or app
 
-O plugin guarda a última leitura por perfil, para duas contas na mesma máquina (pessoal e trabalho, por exemplo) não misturarem a cota. O perfil é, nesta ordem:
+The plugin keeps the last reading per profile, so two accounts on the same machine (personal and work, for example) do not mix their usage. The profile is, in this order:
 
-1. a variável `CLAUDE_PERFIL`, se existir;
-2. a variável `CLAUDE_CONFIG_DIR`, se existir;
+1. the `CLAUDE_PERFIL` environment variable, if set;
+2. the `CLAUDE_CONFIG_DIR` environment variable, if set;
 3. `padrao`.
 
-Para abrir um segundo app do Claude Desktop com perfil próprio, defina `CLAUDE_PERFIL` antes de abri-lo (PowerShell):
+To open a second Claude Desktop app with its own profile, set `CLAUDE_PERFIL` before opening it (PowerShell):
 
 ```
-$env:CLAUDE_PERFIL = 'Trabalho'
-Start-Process claude.exe -ArgumentList '--user-data-dir="C:\caminho\do\perfil"'
+$env:CLAUDE_PERFIL = 'Work'
+Start-Process claude.exe -ArgumentList '--user-data-dir="C:\path\to\profile"'
 ```
 
-Além disso, uma leitura guardada cujo reset difere em mais de 30 minutos do da sessão atual é descartada (é de outra conta). O `/cota` mostra a `fonte:` usada.
+A stored reading whose reset differs by more than 30 minutes from the current session's is discarded, because it belongs to another account. `/cota` shows the source it used.
 
-Se o plugin perceber duas contas gravando no perfil `padrao` (nenhum perfil definido), ele mostra `⚠ perfil` na barra e a explicação no `/cota`. Sem sinal de segunda conta, não avisa.
+If the plugin detects two accounts writing to the `padrao` profile (no profile set), it shows `⚠ perfil` in the bottom bar and explains it in `/cota`. With no sign of a second account, it stays silent.
 
-## O que o plugin faz (transparência)
+## What the plugin does (transparency)
 
-- **Lê:** só a cota de uso da conta (limites e quando reiniciam), pelo `$.session.usage()` e pela ferramenta do app `get_usage` (do servidor `ccd_session_mgmt`, somente leitura).
-- **Quando chama a ferramenta por conta própria:** ao iniciar a sessão e ao fim de cada resposta, no máximo uma vez a cada 5 minutos. É a única ferramenta que ele chama; o modelo não participa.
-- **Lê também** as variáveis de ambiente `CLAUDE_PERFIL` e `CLAUDE_CONFIG_DIR`, só para nomear o perfil.
-- **Guarda:** só a última leitura de cada limite (semana, janela de 5 h e semana por modelo, quando o plano tem: porcentagem, data do reset e hora da leitura), por perfil, no armazenamento do próprio plugin (`$.store`), para já abrir a sessão com o número certo e para a pílula do [cota-barra](https://github.com/MuriloNM/cota-barra) ler.
-- **Não envia nada para fora:** não faz requisições de rede, não executa comandos nem lê o conteúdo da conversa. O evento `turn.complete` só serve de gatilho para atualizar o número; o texto da resposta não é lido nem repassado.
-- **Mostra:** uma linha na barra de baixo (`$.ui.status`) e o comando `/cota` com o cartão do detalhe. O cartão é desenhado só com o texto da própria resposta do `/cota`, sem carregar nada de fora.
+- **Reads:** only your account's usage (its limits and when they reset), through `$.session.usage()` and the app's `get_usage` tool (from the `ccd_session_mgmt` server, read-only).
+- **When it calls the tool on its own:** at session start and at the end of each reply, at most once every 5 minutes. If a call goes unanswered, it tries again on the next occasion. It is the only tool it calls, and the model is not involved.
+- **Also reads:** the `CLAUDE_PERFIL` and `CLAUDE_CONFIG_DIR` environment variables, only to name the profile, and the `language` row in `/config`, only to pick the language of its texts.
+- **Stores:** only the last reading of each limit (the week, the 5-hour window and per-model weeks, when the plan has them: percentage, reset date and time of reading), per profile, in the plugin's own storage (`$.store`), so a session opens with the right number and the [cota-barra](https://github.com/MuriloNM/cota-barra) pill can read it.
+- **Sends nothing out:** it makes no network requests, runs no commands and does not read the conversation. The `turn.complete` event only triggers a refresh of the number; the reply's text is neither read nor passed on.
+- **Shows:** one line in the bottom bar (`$.ui.status`) and the `/cota` command with the details card. The card is drawn only from the text of the `/cota` answer itself, loading nothing from outside.
+
+## Em português
+
+O `cota` mostra na barra de baixo do app desktop do Claude (aba Code) se o uso da cota semanal está no ritmo certo, e o comando `/cota` abre um cartão com o detalhe. Os textos seguem o idioma do Claude.
+
+`🟢 Semana 49% / 61% → 78%`: **49%** é o que você já usou, **61%** é o esperado até agora e **78%** é onde a semana fecha se o ritmo continuar.
+
+Para instalar no app: **+** ao lado do campo de texto, **Plugins**, **Add marketplace** com `MuriloNM/claude-cota` e **Add plugin** `cota`. O plugin não envia nada para fora e só lê a cota, as variáveis de perfil e o idioma configurado; o detalhe está em "What the plugin does".
