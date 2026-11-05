@@ -133,6 +133,16 @@ async function chavePerfil($: EngineInterface): Promise<string> {
   return 'ultima:' + bruto.replace(/[^\w.-]+/g, '_').slice(-60)
 }
 
+// Para a pílula (cota-barra): a janela de 5 h, em planos que têm, e a semana de cada modelo, como a do Fable.
+async function guardarOutrasJanelas($: EngineInterface, perfil: string, janelas: JanelaDoApp[], agora: number) {
+  const cinco = janelas.find(j => /\b(5|five)[\s-]*h/i.test(j.label))
+  if (cinco?.resetsAt) await $.store.set('cinco_horas:' + perfil, { percentUsed: cinco.percentUsed, resetsAt: cinco.resetsAt, lido: agora })
+  const modelos = janelas
+    .filter(j => j.resetsAt && /weekly/i.test(j.label) && !/all models/i.test(j.label))
+    .map(j => ({ nome: j.label.split('·').pop()!.trim(), percentUsed: j.percentUsed, resetsAt: j.resetsAt }))
+  await $.store.set('modelos:' + perfil, { lido: agora, janelas: modelos })
+}
+
 async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura | undefined> {
   const chave = await chavePerfil($)
   semPerfil = chave === 'ultima:padrao'
@@ -145,6 +155,7 @@ async function leituraDoApp($: EngineInterface, agora: number): Promise<Leitura 
     const bloco = r.content.find(c => c.type === 'text') as { text: string } | undefined
     const dados = r.structuredContent ?? (bloco ? JSON.parse(bloco.text) : undefined)
     const janelas: JanelaDoApp[] = dados?.plan?.windows ?? []
+    await guardarOutrasJanelas($, chave.slice('ultima:'.length), janelas, agora)
     const semana = janelas.find(j => /weekly/i.test(j.label) && /all models/i.test(j.label))
     if (!semana?.resetsAt) { erroDoApp = dados?.plan?.status ?? 'sem janela semanal'; return guardada }
     erroDoApp = ''

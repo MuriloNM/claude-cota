@@ -52,6 +52,50 @@ test('app sem conexão: aviso curto, sem erro cru, e tenta de novo na vez seguin
   expect(segunda.text).toContain('app sem resposta agora')
 })
 
+test('guarda a janela de 5 h e a semana por modelo no perfil da conta', async ($, on) => {
+  const agora = Date.parse('2026-11-05T12:00:00Z')
+  const guardado: Record<string, unknown> = {}
+  on('command.register', () => ({ value: { command: 'cota' } }))
+  on('clock.now', () => ({ value: agora }))
+  on('env.get', () => ({ value: 'Trabalho' }))
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', (_, e) => {
+    guardado[e.key] = e.value
+    return { value: undefined }
+  })
+  on('session.usage', () => ({ value: { rateLimits: [] } as never }))
+  on('ui.status', () => ({ value: undefined }))
+  on('mcp.call', () => ({
+    value: {
+      isError: false,
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          plan: {
+            windows: [
+              { label: '5-hour', percentUsed: 40, resetsAt: '2026-11-05T14:00:00Z' },
+              { label: 'Weekly · all models', percentUsed: 15, resetsAt: '2026-11-12T10:00:00Z' },
+              { label: 'Weekly · Fable', percentUsed: 2, resetsAt: '2026-11-12T10:00:00Z' },
+            ],
+          },
+        }),
+      }],
+    } as never,
+  }))
+
+  await $.command.run({
+    command: 'cota', args: '', origin: { kind: 'plugin', name: 'teste' },
+    presentation: { isFullscreen: false, columns: 80 },
+  })
+
+  expect(guardado['cinco_horas:Trabalho']).toEqual({ percentUsed: 40, resetsAt: '2026-11-05T14:00:00Z', lido: agora })
+  expect(guardado['modelos:Trabalho']).toEqual({
+    lido: agora,
+    janelas: [{ nome: 'Fable', percentUsed: 2, resetsAt: '2026-11-12T10:00:00Z' }],
+  })
+  expect(guardado['ultima:Trabalho']).toEqual({ percentUsed: 15, resetsAt: '2026-11-12T10:00:00Z', lido: agora })
+})
+
 test('sem dado, fica a linha normal do engine', async ($, on) => {
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)

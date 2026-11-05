@@ -63,9 +63,9 @@ Se o plugin perceber duas contas gravando no perfil `padrao` (nenhum perfil defi
 
 ## O que o plugin faz (transparência)
 
-- **Lê:** só a cota de uso da conta (limite semanal e quando reinicia), pelo `$.session.usage()` e pela ferramenta do app `get_usage` (do servidor `ccd_session_mgmt`, somente leitura).
+- **Lê:** só a cota de uso da conta (limites e quando reiniciam), pelo `$.session.usage()` e pela ferramenta do app `get_usage` (do servidor `ccd_session_mgmt`, somente leitura).
 - **Quando chama a ferramenta por conta própria:** ao iniciar a sessão e ao fim de cada resposta, no máximo uma vez a cada 5 minutos. É a única ferramenta que ele chama; o modelo não participa.
 - **Lê também** as variáveis de ambiente `CLAUDE_PERFIL` e `CLAUDE_CONFIG_DIR`, só para nomear o perfil.
-- **Guarda:** só a última leitura da cota (porcentagem, data do reset e hora da leitura), uma por perfil, no armazenamento do próprio plugin (`$.store`), para já abrir a sessão com o número certo.
+- **Guarda:** só a última leitura de cada limite (semana, janela de 5 h e semana por modelo, quando o plano tem: porcentagem, data do reset e hora da leitura), por perfil, no armazenamento do próprio plugin (`$.store`), para já abrir a sessão com o número certo e para a pílula do [cota-barra](https://github.com/MuriloNM/cota-barra) ler.
 - **Não envia nada para fora:** não faz requisições de rede, não executa comandos nem lê o conteúdo da conversa. O evento `turn.complete` só serve de gatilho para atualizar o número; o texto da resposta não é lido nem repassado.
 - **Mostra:** uma linha na barra de baixo (`$.ui.status`) e o comando `/cota` com o cartão do detalhe. O cartão é desenhado só com o texto da própria resposta do `/cota`, sem carregar nada de fora.
