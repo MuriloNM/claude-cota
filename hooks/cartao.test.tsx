@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { ativoMs, semanaDoTexto, sonoDoTexto } from './register.js'
+import { ativoMs, diaTipico, pontosDoHistorico, semanaDoTexto, sonoDoTexto } from './register.js'
 
 const TEXTO =
   'Cota semanal 16% (esperado 30%) 🟢 folga · projeção 52% · reseta em 4.9d · pode gastar 17%/dia\nfonte: app (lido há 2 min)'
@@ -188,6 +188,57 @@ test('sem ajuste, o esperado já tira as horas de sono e o "por dia" segue em di
   })
   expect(r.text).toContain('(esperado 71%)')
   expect(r.text).toContain('25%/dia')
+})
+
+test('dia típico: a mesma conta da pílula', async () => {
+  const hoje = new Date(2026, 10, 20, 12).getTime(), rs = hoje + 3 * 86_400_000
+  const P = (atras: number, usado: number, reset = rs) => ({ lido: hoje - atras * 86_400_000, usado, reset })
+  // 5 pontos em cada um dos 4 dias sem leitura; com o dia -5, sem uso, e sem o maior: 15 / 4
+  expect(diaTipico([P(6, 0), P(5, 0), P(1, 20)], hoje, { sono: '0-0' })).toEqual({ porDia: 3.75, dias: 5 })
+  expect(diaTipico([P(6, 5), P(5, 5), P(1, 5)], hoje, {}).porDia).toBe(0)
+  expect(diaTipico([P(9, 0, rs - 7 * 86_400_000), P(8, 1, rs - 7 * 86_400_000), P(1, 9, hoje + 4 * 86_400_000)], hoje, {}).dias).toBe(4)   // -7 a -4, antes da virada, ficam de fora
+  expect(diaTipico([], hoje, {})).toEqual({ porDia: 0, dias: 0 })
+})
+
+test('histórico: só linhas boas, da conta certa e dentro do prazo', async () => {
+  const agora = new Date(2026, 10, 20).getTime(), r = '2026-11-23T10:00:00.000Z'
+  const texto = [`Trabalho\t${agora - 1000}\t10\t${r}`, `padrao\t${agora - 1000}\t20\t${r}`, `Trabalho#5h\t${agora - 1000}\t30\t${r}`, 'lixo', `Trabalho\tx\t10\t${r}`, `Trabalho\t${agora - 60 * 86_400_000}\t5\t${r}`, `Trabalho\t${agora}\t1`].join('\r\n')
+  expect(pontosDoHistorico(texto, 'Trabalho', agora).map(p => p.usado)).toEqual([10])
+  expect(pontosDoHistorico('', 'Trabalho', agora)).toEqual([])
+})
+
+const cenarioProjecao = async ($: Parameters<Parameters<typeof test>[1]>[0], on: Parameters<Parameters<typeof test>[1]>[1], historico: () => string) => {
+  const agora = new Date(2026, 10, 14).getTime()   // sábado, 0h: faltam 2 dias inteiros
+  const reset = new Date(2026, 10, 16).toISOString()
+  idiomaDoClaude(on, 'Pt-br')
+  on('clock.now', () => ({ value: agora }))
+  on('env.get', () => ({ value: 'Trabalho' }))
+  on('store.get', () => ({ value: { percentUsed: 50, resetsAt: reset, lido: agora - 60_000 } }))
+  on('fs.read', (_, e) => ({ value: /historico\.tsv$/.test(e.path) ? historico() : '{}' }))
+  on('session.usage', () => ({ value: { rateLimits: [] } as never }))
+  on('ui.status', () => ({ value: undefined }))
+  return { agora, reset, r: await $.command.run({
+    command: 'cota', args: '', origin: { kind: 'plugin', name: 'teste' },
+    presentation: { isFullscreen: false, columns: 80 },
+  }) }
+}
+
+test('com a pílula: projeta com o mesmo dia típico', async ($, on) => {
+  const agora = new Date(2026, 10, 14).getTime(), reset = new Date(2026, 10, 16).toISOString()
+  const linhas = Array.from({ length: 8 }, (_, i) => `Trabalho\t${agora + (i - 8) * 86_400_000 + 12 * 3_600_000}\t${i * 5}\t${reset}`)
+  const { r } = await cenarioProjecao($, on, () => linhas.join('\n') + '\n')
+  expect(r.text).toContain('projeção 60%')   // igual ao teste "dias restantes inteiros" da pílula
+})
+
+test('sem a pílula: arquivo ausente não dá erro e a projeção fica pela média', async ($, on) => {
+  const { r } = await cenarioProjecao($, on, () => { throw new Error('ENOENT') })
+  expect(r.text).toContain('(esperado 71%)')
+  expect(r.text).toContain('projeção 70%')
+})
+
+test('histórico quebrado não dá erro e a projeção fica pela média', async ($, on) => {
+  const { r } = await cenarioProjecao($, on, () => 'não é um histórico\n\t\t\t\n')
+  expect(r.text).toContain('projeção 70%')
 })
 
 test('o esperado só anda nos dias que contam', async ($, on) => {

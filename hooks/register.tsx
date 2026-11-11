@@ -174,7 +174,60 @@ export function ativoMs(a: number, b: number, d: DiasConta): number {
   return total
 }
 
-function linha(janelas: readonly Janela[], agora: number, t: Textos, curta = false, contam?: DiasConta): string | undefined {
+// Histórico de leituras que a pílula do cota-barra grava. O plugin só lê; sem pílula o arquivo não existe, e a projeção fica pela média.
+export type Ponto = { lido: number; usado: number; reset: number }
+const GUARDAR_DIAS = 56, DIAS_PARA_CONFIAR = 7
+export function pontosDoHistorico(texto: string, conta: string, agora: number): Ponto[] {
+  const pontos: Ponto[] = []
+  for (const l of texto.split(/\r?\n/)) {
+    const p = l.split('\t')
+    if (p.length !== 4 || p[0] !== conta) continue
+    const lido = Number(p[1]), usado = Number(p[2]), reset = Date.parse(p[3])
+    if (Number.isFinite(lido) && Number.isFinite(usado) && Number.isFinite(reset) && lido >= agora - GUARDAR_DIAS * 86_400_000) pontos.push({ lido, usado, reset })
+  }
+  return pontos
+}
+async function lerHistorico($: EngineInterface, conta: string, agora: number): Promise<Ponto[]> {
+  try {
+    const arq = await arquivoDias($)
+    return arq ? pontosDoHistorico(String(await $.fs.read(arq.replace(/dias\.json$/, 'historico.tsv'))), conta, agora) : []
+  } catch { return [] }
+}
+const inicioDoDia = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime() }
+const somaDias = (ms: number, n: number) => { const d = new Date(ms); d.setDate(d.getDate() + n); return d.getTime() }
+// Quanto se gasta num dia comum. A mesma conta da pílula: dias sem uso entram; a partir de 3 dias, o maior fica de fora;
+// sem leitura por dias seguidos, o que subiu se divide entre eles; hoje e o primeiro dia, pela metade, não entram.
+export function diaTipico(historico: readonly Ponto[], agora: number, d: DiasConta): { porDia: number; dias: number } {
+  if (!historico.length) return { porDia: 0, dias: 0 }
+  const pts = [...historico].sort((a, b) => a.lido - b.lido)
+  const porDia = new Map<number, number>(), semDado = new Set<number>()
+  for (let i = 1; i < pts.length; i++) {
+    const mesmaSemana = Math.abs(pts[i].reset - pts[i - 1].reset) <= 5 * MIN_MS
+    const delta = mesmaSemana ? Math.max(pts[i].usado - pts[i - 1].usado, 0) : pts[i].usado
+    const dia = inicioDoDia(pts[i].lido)
+    let de = somaDias(inicioDoDia(pts[i - 1].lido), 1)
+    if (!mesmaSemana) {
+      const inicio = inicioDoDia(pts[i].reset - SEMANA_MS)
+      for (let x = de; x < inicio && x < dia; x = somaDias(x, 1)) semDado.add(x)
+      if (inicio > de) de = inicio
+    }
+    const vao: number[] = []
+    for (let x = de; x <= dia; x = somaDias(x, 1)) if (contaNoDia(d, x)) vao.push(x)
+    if (!vao.length) vao.push(dia)
+    for (const x of vao) porDia.set(x, (porDia.get(x) ?? 0) + delta / vao.length)
+  }
+  const primeiro = inicioDoDia(pts[0].lido), valores: number[] = []
+  for (let x = somaDias(inicioDoDia(agora), -1); x > primeiro && valores.length < 28; x = somaDias(x, -1)) {
+    if (semDado.has(x) || !contaNoDia(d, x)) continue
+    valores.push(porDia.get(x) ?? 0)
+  }
+  if (!valores.length) return { porDia: 0, dias: 0 }
+  valores.sort((a, b) => a - b)
+  const usar = valores.length >= 3 ? valores.length - 1 : valores.length
+  return { porDia: valores.slice(0, usar).reduce((a, b) => a + b, 0) / usar, dias: valores.length }
+}
+
+function linha(janelas: readonly Janela[], agora: number, t: Textos, curta = false, contam?: DiasConta, historico: readonly Ponto[] = []): string | undefined {
   const j = janelas.find(x => x.kind === 'seven_day')
   if (!j || !j.resetsAt) {
     return `${t.cota}: ${t.semDado}${appSemResposta ? ` (${t.semResposta})` : ''}`
@@ -195,7 +248,15 @@ function linha(janelas: readonly Janela[], agora: number, t: Textos, curta = fal
   const ideal = decorrido * 100
   const usado = j.percentUsed
   const dif = usado - ideal
-  const projecao = decorrido > 0.02 ? usado / decorrido : usado
+  let projecao = decorrido > 0.02 ? usado / decorrido : usado
+  if (historico.length) {
+    // A leitura de agora entra como a pílula faria, para os dois darem o mesmo número antes de ela registrar.
+    const tipico = diaTipico([...historico, { lido: agora, usado, reset: fim }], agora, contam ?? {})
+    if (tipico.dias > 0) {
+      const peso = Math.min(tipico.dias / DIAS_PARA_CONFIAR, 1)
+      projecao = Math.max(usado, peso * (usado + tipico.porDia * diasQueContam) + (1 - peso) * projecao)
+    }
+  }
   const dias = Math.max(resta, 0) / 86_400_000
 
   const sinal: Sinal = dif > 5 ? 'acima' : dif < -5 ? 'folga' : 'ritmo'
@@ -390,10 +451,12 @@ async function atualiza($: EngineInterface, t: Textos): Promise<string | undefin
   const notas = [appSemResposta && t.semResposta, outraConta && t.outraConta].filter(Boolean).join('; ')
   fonte = (recente || (!sessao && daSemana)) ? `${t.app(idade)}${notas ? `; ${notas}` : ''}` : sessao ? t.sessao : t.nenhuma
   const janelas = janela ? [janela] : []
-  const contam = (await lerDias($))[(await chavePerfil($)).slice('ultima:'.length)] ?? {}   // sem ajuste, vale o padrão: todos os dias, sem as horas de sono
-  const curta = linha(janelas, agora, t, true, contam)
+  const perfil = (await chavePerfil($)).slice('ultima:'.length)
+  const contam = (await lerDias($))[perfil] ?? {}   // sem ajuste, vale o padrão: todos os dias, sem as horas de sono
+  const historico = await lerHistorico($, perfil, agora)
+  const curta = linha(janelas, agora, t, true, contam, historico)
   $.ui.status(curta && conflito ? curta + ' ⚠ perfil' : curta)
-  return janela ? linha(janelas, agora, t, false, contam) : undefined
+  return janela ? linha(janelas, agora, t, false, contam, historico) : undefined
 }
 
 // /cota dias seg-sex | seg,qua,sex | todos   ·   /cota folga 10/11 (marca ou desmarca) | limpar
