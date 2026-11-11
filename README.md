@@ -34,7 +34,12 @@ By default, the expected pace moves every day of the week. You can count only so
 /cota dias todos          every day again
 /cota folga 10/11         marks or unmarks a day off (day/month)
 /cota folga limpar        removes all days off
+/cota sono 23-5           sleep hours, from 11 pm to 5 am
+/cota sono nao            counts all 24 hours
+/cota sono padrao         back to the default, midnight to 6 am
 ```
+
+By default, 6 hours a day, from midnight to 6 am, are taken out as sleep: expected stands still during them. If something keeps running at night and spending your quota, use `/cota sono nao`.
 
 The settings live in `~/.cota-barra/dias.json`, one entry per profile. The [cota-barra](https://github.com/MuriloNM/cota-barra) pill reads and writes the same file, so a change in either place shows in both.
 
@@ -84,7 +89,7 @@ If the plugin detects two accounts writing to the `padrao` profile (no profile s
 - **Reads:** only your account's usage (its limits and when they reset), through `$.session.usage()` and the app's `get_usage` tool (from the `ccd_session_mgmt` server, read-only).
 - **When it calls the tool on its own:** at session start and at the end of each reply, at most once every 5 minutes. If a call goes unanswered, it tries again on the next occasion. It is the only tool it calls, and the model is not involved.
 - **Also reads:** the `CLAUDE_PERFIL` and `CLAUDE_CONFIG_DIR` environment variables, only to name the profile, the `language` row in `/config`, only to pick the language of its texts, and `~/.cota-barra/dias.json`, the days that count (located with `USERPROFILE` or `HOME`).
-- **Writes files:** only `~/.cota-barra/dias.json`, and only when you run `/cota dias` or `/cota folga`.
+- **Writes files:** only `~/.cota-barra/dias.json`, and only when you run `/cota dias`, `/cota folga` or `/cota sono`.
 - **Stores:** only the last reading of each limit (the week, the 5-hour window and per-model weeks, when the plan has them: percentage, reset date and time of reading), per profile, in the plugin's own storage (`$.store`), so a session opens with the right number and the [cota-barra](https://github.com/MuriloNM/cota-barra) pill can read it.
 - **Sends nothing out:** it makes no network requests, runs no commands and does not read the conversation. The `turn.complete` event only triggers a refresh of the number; the reply's text is neither read nor passed on.
 - **Shows:** one line in the bottom bar (`$.ui.status`) and the `/cota` command with the details card. The card is drawn only from the text of the `/cota` answer itself, loading nothing from outside.
@@ -95,6 +100,6 @@ O `cota` mostra na barra de baixo do app desktop do Claude (aba Code) se o uso d
 
 `🟢 Semana 49% / 61% → 78%`: **49%** é o que você já usou, **61%** é o esperado até agora e **78%** é onde a semana fecha se o ritmo continuar.
 
-Para contar só alguns dias, por conta: `/cota dias seg-sex`. Para marcar uma folga, como um feriado: `/cota folga 10/11`. O esperado só anda nos dias que contam.
+Para contar só alguns dias, por conta: `/cota dias seg-sex`. Para marcar uma folga, como um feriado: `/cota folga 10/11`. O esperado só anda nos dias que contam. Por padrão, 6 horas por dia, da meia-noite às 6h, saem da conta como sono; para mudar: `/cota sono 23-5`, ou `/cota sono nao` para contar as 24 horas.
 
 Para instalar no app: **+** ao lado do campo de texto, **Plugins**, **Add marketplace** com `MuriloNM/claude-cota` e **Add plugin** `cota`. O plugin não envia nada para fora e só lê a cota, as variáveis de perfil e o idioma configurado; o detalhe está em "What the plugin does".

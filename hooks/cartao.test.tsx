@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { ativoMs, semanaDoTexto } from './register.js'
+import { ativoMs, semanaDoTexto, sonoDoTexto } from './register.js'
 
 const TEXTO =
   'Cota semanal 16% (esperado 30%) 🟢 folga · projeção 52% · reseta em 4.9d · pode gastar 17%/dia\nfonte: app (lido há 2 min)'
@@ -152,8 +152,42 @@ test('dias que contam: entende os jeitos de escrever', async () => {
   expect(semanaDoTexto('todos')).toBe('0123456')
   expect(semanaDoTexto('xyz')).toBeUndefined()
   const seg = new Date(2026, 10, 9).getTime()
-  expect(ativoMs(seg, new Date(2026, 10, 16).getTime(), { semana: '12345' })).toBe(5 * 86_400_000)
-  expect(ativoMs(seg, new Date(2026, 10, 16).getTime(), { semana: '12345', folgas: ['2026-11-10'] })).toBe(4 * 86_400_000)
+  expect(ativoMs(seg, new Date(2026, 10, 16).getTime(), { semana: '12345', sono: '0-0' })).toBe(5 * 86_400_000)
+  expect(ativoMs(seg, new Date(2026, 10, 16).getTime(), { semana: '12345', folgas: ['2026-11-10'], sono: '0-0' })).toBe(4 * 86_400_000)
+})
+
+test('horas de sono: saem da conta, mesmo virando a meia-noite', async () => {
+  const H = 3_600_000
+  const seg = new Date(2026, 10, 9).getTime(), fim = new Date(2026, 10, 16).getTime()
+  expect(ativoMs(seg, fim, {})).toBe(126 * H)
+  expect(ativoMs(seg, fim, { sono: '23-5' })).toBe(126 * H)
+  expect(ativoMs(seg, fim, { semana: '12345' })).toBe(90 * H)
+  expect(ativoMs(new Date(2026, 10, 9, 23).getTime(), new Date(2026, 10, 10, 5).getTime(), { sono: '23-5' })).toBe(0)
+  expect(ativoMs(new Date(2026, 10, 9, 3).getTime(), new Date(2026, 10, 9, 8).getTime(), {})).toBe(2 * H)
+  expect(sonoDoTexto('23-5')).toBe('23-5')
+  expect(sonoDoTexto('23h a 5h')).toBe('23-5')
+  expect(sonoDoTexto('24-6')).toBe('0-6')
+  expect(sonoDoTexto('não')).toBe('0-0')
+  expect(sonoDoTexto('padrao')).toBe('0-6')
+  expect(sonoDoTexto('tarde')).toBeUndefined()
+})
+
+test('sem ajuste, o esperado já tira as horas de sono e o "por dia" segue em dias inteiros', async ($, on) => {
+  const agora = new Date(2026, 10, 14, 0).getTime()   // sábado, 0h: faltam 2 dias inteiros
+  const reset = new Date(2026, 10, 16).toISOString()
+  idiomaDoClaude(on, 'Pt-br')
+  on('clock.now', () => ({ value: agora }))
+  on('env.get', () => ({ value: 'Trabalho' }))
+  on('store.get', () => ({ value: { percentUsed: 50, resetsAt: reset, lido: agora - 60_000 } }))
+  on('fs.read', () => ({ value: '{}' }))
+  on('session.usage', () => ({ value: { rateLimits: [] } as never }))
+  on('ui.status', () => ({ value: undefined }))
+  const r = await $.command.run({
+    command: 'cota', args: '', origin: { kind: 'plugin', name: 'teste' },
+    presentation: { isFullscreen: false, columns: 80 },
+  })
+  expect(r.text).toContain('(esperado 71%)')
+  expect(r.text).toContain('25%/dia')
 })
 
 test('o esperado só anda nos dias que contam', async ($, on) => {
@@ -194,6 +228,12 @@ test('/cota dias e /cota folga gravam o arquivo da conta', async ($, on) => {
   await run('dias todos')
   expect(JSON.parse(gravado)).toEqual({})
   expect((await run('dias quinta-feira-santa')).text).toContain('Não entendi os dias')
+  expect((await run('sono 23-5')).text).toContain('sono: 23h-5h')
+  expect(JSON.parse(gravado)).toEqual({ Trabalho: { sono: '23-5' } })
+  expect((await run('sono nao')).text).toContain('não tira horas de sono')
+  await run('sono padrao')
+  expect(JSON.parse(gravado)).toEqual({})
+  expect((await run('sono tarde')).text).toContain('Não entendi o horário')
 })
 
 test('sem dado, fica a linha normal do engine', async ($, on) => {
